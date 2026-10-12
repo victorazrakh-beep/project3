@@ -42,8 +42,8 @@ export function render({ ev }) {
     <h2><span class="step">2</span> ¿En qué lugar?</h2>
     <div class="seg" data-key="place">${PLACES.map(([v, l]) => `<button data-v="${v}" aria-pressed="${choice.place === v}">${l}</button>`).join('')}</div>
     <div class="tower-box" id="floor" ${choice.place === 'edificio' ? '' : 'hidden'}>
-      <canvas class="tower" id="tower" aria-label="Edificio: toca o arrastra para elegir tu piso"></canvas>
-      <p class="tower-tip">Toca o arrastra sobre el edificio para elegir tu piso</p>
+      <canvas class="tower" id="tower" aria-label="Edificio: toca un piso para elegirlo"></canvas>
+      <p class="tower-tip">Toca el edificio para elegir tu piso</p>
       <div class="tower-controls">
         ${stepper('floors', 'Pisos del edificio', choice.floors)}
         ${stepper('floor', 'Tu piso', choice.floor)}
@@ -117,7 +117,14 @@ export function mount(el, ctx) {
   let shown = 0;
   const save = () => store.set(`onda-tu-${ev.id}`, { ...choice, spot });
   // Once you've picked a spot, cards stop at the map's edge on phones so the 3D city stays in view.
-  const clearMap = () => document.body.classList.toggle('map-clear', !!spot && document.activeElement !== $('#city', el));
+  const clearMap = () => {
+    const on = !!spot && document.activeElement !== $('#city', el);
+    if (document.body.classList.contains('map-clear') === on) return;
+    // The page and the card box line up exactly, so carry the scroll position across.
+    const phone = innerWidth < 900, y = on ? scrollY : el.scrollTop;
+    document.body.classList.toggle('map-clear', on);
+    if (phone) { if (on) el.scrollTop = y; else scrollTo(0, y); }
+  };
 
   function compute(replayWaves) {
     if (!spot) return;
@@ -155,7 +162,8 @@ export function mount(el, ctx) {
       const behavior = reduceMotion() ? 'auto' : 'smooth';
       setTimeout(() => innerWidth >= 900
         ? $('#result', el).scrollIntoView({ behavior, block: 'start' })
-        : el.scrollTo({ top: $('#result', el).offsetTop - (document.body.classList.contains('map-clear') ? 12 : innerHeight * 0.44 - 4), behavior }), 250);
+        : document.body.classList.contains('map-clear') ? el.scrollTo({ top: $('#result', el).offsetTop - 12, behavior })
+          : scrollTo({ top: $('#result', el).offsetTop - innerHeight * 0.44 + 4, behavior }), 250);
     }
     tower?.set({ mmi: total });
     save();
@@ -281,10 +289,10 @@ export function mount(el, ctx) {
     } else if (e.key === 'Escape') { suggest.hidden = true; }
   });
   input.addEventListener('focus', () => {
-    document.body.classList.remove('map-clear');
+    clearMap();
     if (results.length) show();
     // On phones, lift the search box toward the top so the suggestions clear the keyboard and tab bar.
-    if (innerWidth < 900) el.scrollTo({ top: input.closest('.card').offsetTop - 70 });
+    if (innerWidth < 900) scrollTo({ top: input.closest('.card').getBoundingClientRect().top + scrollY - 70 });
   });
   input.addEventListener('blur', () => setTimeout(() => { suggest.hidden = true; clearMap(); }, 180));
   suggest.addEventListener('pointerdown', e => e.preventDefault()); // keep focus so the tap lands

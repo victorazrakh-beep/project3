@@ -58,6 +58,7 @@ function route() {
     clearYou();
     view.innerHTML = next.render(ctx) + footer();
     view.scrollTop = 0;
+    scrollTo(0, 0);
     ctx.current = next;
     next.mount?.(view, ctx);
     document.querySelectorAll('.tabs a').forEach(a => a.toggleAttribute('aria-current', a.dataset.route === name));
@@ -145,5 +146,9 @@ $('#event-chip').addEventListener('click', async () => {
 const closeSheet = () => { sheet.classList.remove('open'); setTimeout(() => { sheet.hidden = true; }, 300); };
 sheet.addEventListener('click', e => { if (e.target === sheet || e.target.closest('[data-close]')) closeSheet(); });
 addEventListener('keydown', e => { if (e.key === 'Escape' && !sheet.hidden) closeSheet(); });
+
+// Fade the top bar's backdrop in once the page scrolls under it (phones).
+addEventListener('scroll', () => document.body.classList.toggle('scrolled', scrollY > 40), { passive: true });
+view.addEventListener('scroll', () => document.body.classList.toggle('scrolled', view.scrollTop > 40), { passive: true });
 
 start();

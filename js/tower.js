@@ -175,16 +175,17 @@ export function createTower(canvas, { onPick } = {}) {
     const y = e.clientY - rect.top;
     return Math.max(1, Math.min(state.floors, Math.floor((L.base - y) / L.fh) + 1));
   }
+  // Mouse: press and drag. Touch: a tap picks the floor, while a swipe scrolls the page as usual.
   let dragging = false;
   canvas.addEventListener('pointerdown', e => {
     dragging = true;
+    if (e.pointerType === 'touch') return;
     canvas.setPointerCapture(e.pointerId);
     onPick?.(floorAt(e));
   });
-  canvas.addEventListener('pointermove', e => { if (dragging) onPick?.(floorAt(e)); });
-  const stop = () => { dragging = false; };
-  canvas.addEventListener('pointerup', stop);
-  canvas.addEventListener('pointercancel', stop);
+  canvas.addEventListener('pointermove', e => { if (dragging && e.pointerType !== 'touch') onPick?.(floorAt(e)); });
+  canvas.addEventListener('pointerup', e => { if (dragging && e.pointerType === 'touch') onPick?.(floorAt(e)); dragging = false; });
+  canvas.addEventListener('pointercancel', () => { dragging = false; });
 
   function destroy() { cancelAnimationFrame(raf); raf = 0; ro.disconnect(); io.disconnect(); }
 
