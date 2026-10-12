@@ -122,20 +122,98 @@ const PANAMA_BBOX = '-83.06,7.15,-77.15,9.70';
 export const inPanama = (lat, lon) => lat > 7.15 && lat < 9.7
   && lon > -82.93 + 0.24 * (lat - 8.03) && lon < -77.89 + 0.36 * (lat - 7.22);
 
-/** Searches places in Panamá only, ranked toward the epicenter. Cancels the previous search when a new one starts. */
+/**
+ * Searches places in Panamá only, ranked toward the epicenter, and forgiving of typos:
+ * when nothing matches well, it also tries looser versions of the query and ranks every
+ * candidate by spelling similarity ("ph cresta palace" finds "P.H. Creta Palace").
+ * Cancels the previous search when a new one starts.
+ */
 export async function searchPlaces(query, ev) {
   searchCtl?.abort();
   searchCtl = new AbortController();
-  const q = new URLSearchParams({ q: query, limit: 15, bbox: PANAMA_BBOX, lat: ev.lat, lon: ev.lon, zoom: 7, location_bias_scale: 0.1 });
-  const res = await fetch(`${PHOTON}/api/?${q}`, { signal: searchCtl.signal });
-  if (!res.ok) throw new Error('search failed');
+  const { signal } = searchCtl;
+  const run = async text => {
+    const q = new URLSearchParams({ q: text, limit: 15, bbox: PANAMA_BBOX, lat: ev.lat, lon: ev.lon, zoom: 7, location_bias_scale: 0.1 });
+    const res = await fetch(`${PHOTON}/api/?${q}`, { signal });
+    if (!res.ok) throw new Error('search failed');
+    return (await res.json()).features.filter(f => f.properties.countrycode === 'PA').map(photonPlace);
+  };
+  let found = await run(query);
+  const rank = list => list.map((p, i) => ({ ...p, score: similarity(query, p) - i * 0.004 })).sort((a, b) => b.score - a.score);
+  let ranked = rank(found);
+  if (!ranked.length || ranked[0].score < 0.86) {
+    const extra = await Promise.all(looser(query).map(v => run(v).catch(e => { if (e.name === 'AbortError') throw e; return []; })));
+    found = found.concat(...extra);
+    ranked = rank(found);
+  }
+  const best = ranked[0]?.score ?? 0;
   const seen = new Set();
-  return (await res.json()).features
-    .filter(f => f.properties.countrycode === 'PA')
-    .map(photonPlace)
+  return ranked
+    .filter(p => p.score >= Math.min(0.5, best - 0.3))
     .filter(p => { const k = `${p.name}|${p.detail}`; return !seen.has(k) && seen.add(k); })
-    .slice(0, 8);
+    .slice(0, 8)
+    .map(p => ({ ...p, fuzzy: p.score < 0.97 && best < 0.97 }));
 }
+
+// ---- Typo-tolerant matching ----
+/** Lowercase, no accents, "P.H." → "ph", other punctuation → spaces. */
+export const words = t => (t || '').toLowerCase().normalize('NFD').replace(/\p{M}/gu, '').replace(/\./g, '')
+  .replace(/[^a-z0-9ñ]+/g, ' ').trim().split(' ').filter(Boolean);
+
+/** Looser queries: each word cut to its start or left out in turn, then every long word cut short. */
+function looser(query) {
+  const w = words(query);
+  const out = new Set();
+  // The search matches word starts, so cutting the misspelled word short usually finds it.
+  w.forEach((x, i) => { if (x.length >= 4) out.add(w.map((y, j) => (j === i ? y.slice(0, 3) : y)).join(' ')); });
+  if (w.length > 1) w.forEach((_, i) => out.add(w.filter((__, j) => j !== i).join(' ')));
+  out.add(w.map(x => (x.length >= 5 ? x.slice(0, 3) : x)).join(' '));
+  out.delete(w.join(' '));
+  out.delete('');
+  return [...out].slice(0, 6);
+}
+
+/** Edit distance where swapping two neighbouring letters counts as one typo. */
+function typos(a, b) {
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) {
+    d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
+  }
+  return d[a.length][b.length];
+}
+
+/** How well a typed word matches a word in a place name (1 = same or a prefix of it). */
+function wordMatch(q, t) {
+  if (t === q || (q.length >= 2 && t.startsWith(q))) return 1;
+  const whole = 1 - typos(q, t) / Math.max(q.length, t.length);
+  // Still typing: compare with the start of the name word.
+  const start = t.length > q.length ? 0.95 * (1 - typos(q, t.slice(0, q.length)) / q.length) : 0;
+  return Math.max(0, whole, start);
+}
+
+/** 0–1: how well the query matches a place's name (and, a little less, its area). */
+export function similarity(query, place) {
+  const q = words(query);
+  if (!q.length) return 0;
+  const name = words(place.name), area = words(place.detail);
+  let sum = 0, weight = 0;
+  for (const w of q) {
+    const inName = Math.max(0, ...name.map(t => wordMatch(w, t)));
+    const inArea = 0.9 * Math.max(0, ...area.map(t => wordMatch(w, t)));
+    sum += Math.max(inName, inArea) * w.length;
+    weight += w.length;
+  }
+  // Words in the same order as typed count a bit more ("bela vista" → Bella Vista before Vista Bella).
+  const typed = q.join(' ');
+  const order = Math.max(0, ...name.map((_, i) => {
+    const part = name.slice(i).join(' ').slice(0, typed.length);
+    return 1 - typos(typed, part) / typed.length;
+  }));
+  return 0.85 * (sum / weight) + 0.15 * order;
+}
+
 
 /** Rough rupture length (Wells & Coppersmith 1994) → how far out to look for aftershocks. */
 export const aftershockRadius = mag => Math.max(40, Math.min(320, 1.5 * 10 ** (-2.44 + 0.59 * mag)));

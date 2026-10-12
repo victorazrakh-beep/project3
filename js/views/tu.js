@@ -1,6 +1,6 @@
 // "Tú": your personal intensity, from the USGS shaking grid at your exact spot.
 import { $, $$, esc, num, int, mmiInfo, mmiColor, MMI, ease, reduceMotion, haptic, store, shortPlace } from '../util.js';
-import { shakingAt, searchPlaces, loadDYFI, inPanama } from '../data.js';
+import { shakingAt, searchPlaces, loadDYFI, inPanama, similarity } from '../data.js';
 import { km } from '../util.js';
 import { showYou, onMapClick, clearYou } from '../map.js';
 import { createTower, towerFacts } from '../tower.js';
@@ -229,7 +229,8 @@ export function mount(el, ctx) {
   function show() {
     suggest.hidden = !results.length && !input.value.trim();
     input.parentElement.setAttribute('aria-expanded', !suggest.hidden);
-    suggest.innerHTML = results.length ? results.map((r, i) => `
+    const guess = results[0]?.fuzzy ? '<p class="suggest-head">¿Quisiste decir…?</p>' : '';
+    suggest.innerHTML = results.length ? guess + results.map((r, i) => `
       <button role="option" id="opt-${i}" aria-selected="${i === active}" data-i="${i}">
         <span class="dot" style="--c:${preview(r)}"></span>
         <span class="grow"><b>${esc(r.name)}</b><small>${esc(r.detail || '')}</small></span>
@@ -249,7 +250,7 @@ export function mount(el, ctx) {
     const q = input.value.trim(), fq = fold(q), mine = ++seq;
     clearTimeout(timer);
     // Towns the USGS already rated show up instantly; OpenStreetMap fills in streets and barrios.
-    const local = q.length < 2 ? [] : (ev.cities || []).filter(c => inPanama(c.lat, c.lon)).filter(c => fold(c.name).startsWith(fq) || fold(c.name).includes(` ${fq}`))
+    const local = q.length < 2 ? [] : (ev.cities || []).filter(c => inPanama(c.lat, c.lon)).filter(c => fold(c.name).startsWith(fq) || fold(c.name).includes(` ${fq}`) || (q.length >= 4 && similarity(q, c) >= 0.82))
       .slice(0, 3).map(c => ({ name: c.name, detail: shortPlace(ev.place), lat: c.lat, lon: c.lon, local: true }));
     results = local; active = local.length ? 0 : -1;
     if (q.length < 3) { spin.hidden = true; show(); return; }
@@ -283,7 +284,7 @@ export function mount(el, ctx) {
     document.body.classList.remove('map-clear');
     if (results.length) show();
     // On phones, lift the search box toward the top so the suggestions clear the keyboard and tab bar.
-    if (innerWidth < 900) el.scrollTo({ top: input.closest('.card').offsetTop - 70, behavior: reduceMotion() ? 'auto' : 'smooth' });
+    if (innerWidth < 900) el.scrollTo({ top: input.closest('.card').offsetTop - 70 });
   });
   input.addEventListener('blur', () => setTimeout(() => { suggest.hidden = true; clearMap(); }, 180));
   suggest.addEventListener('pointerdown', e => e.preventDefault()); // keep focus so the tap lands

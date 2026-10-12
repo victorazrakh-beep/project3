@@ -29,6 +29,10 @@ export function render({ ev, shocks, local }) {
       ${ev.groundFailure?.landslide ? `<span class="chip alert-${ev.groundFailure.landslide}" title="Estimación del USGS">Deslizamientos: alerta ${GROUND[ev.groundFailure.landslide] || ''}</span>` : ''}
       ${ev.groundFailure?.liquefaction ? `<span class="chip alert-${ev.groundFailure.liquefaction}" title="Estimación del USGS">Licuefacción: alerta ${GROUND[ev.groundFailure.liquefaction] || ''}</span>` : ''}
     </div>
+    <div class="maker">
+      <span class="maker-logo" aria-hidden="true"><svg viewBox="0 0 32 32" width="20" height="20"><path d="M3 17h5l3-9 4 17 4-13 3 5h7" fill="none" stroke="#0b0f17" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+      <span><b>Hecho por vahprojects</b><small>Aprende a hacer apps con IA como esta</small></span>
+    </div>
   </section>
 
   <section class="stats reveal">
