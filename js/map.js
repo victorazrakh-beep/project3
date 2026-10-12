@@ -274,6 +274,7 @@ function shockwave() {
  */
 export async function showYou(lat, lon, distance, { mmi = 5, onWave, onBuilding } = {}) {
   await ready;
+  await evReady; // a shared link can open Tú before the quake is on the map
   clearYou();
   const token = youToken;
   const color = mmiColor(mmi);

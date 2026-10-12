@@ -4,14 +4,23 @@ import { shakingAt, searchPlaces, loadDYFI, inPanama, similarity } from '../data
 import { km } from '../util.js';
 import { showYou, onMapClick, clearYou } from '../map.js';
 import { createTower, towerFacts } from '../tower.js';
+import { openShare } from '../share.js';
 
 const PLACES = [['casa', 'Casa'], ['edificio', 'Edificio'], ['afuera', 'Afuera'], ['vehiculo', 'En un carro']];
 const GROUNDS = [['nose', 'No sé'], ['roca', 'Roca o loma'], ['firme', 'Tierra firme'], ['relleno', 'Relleno o junto al agua']];
 
-let choice, offClick, tower, sheetOff;
+let choice, offClick, tower, sheetOff, sharedSpot;
 
 export function render({ ev }) {
   choice = { place: 'casa', floor: 3, floors: 10, ground: 'nose', ...store.get(`onda-tu-${ev.id}`, {}) };
+  const shared = new URLSearchParams(location.hash.split('?')[1] || '');
+  const lat = +shared.get('lat'), lon = +shared.get('lon');
+  if (shared.has('lat') && Number.isFinite(lat) && Number.isFinite(lon)) {
+    sharedSpot = { lat, lon, name: shared.get('n') || null };
+    Object.assign(choice, { place: shared.get('p') || 'casa', ground: shared.get('g') || 'nose' });
+    if (shared.has('f')) choice.floor = Math.max(1, Math.min(80, +shared.get('f') || 1));
+    if (shared.has('F')) choice.floors = Math.min(80, +shared.get('F') || choice.floor);
+  }
   choice.floors = Math.max(choice.floors, choice.floor);
   return `
   <section class="hero reveal">
@@ -67,7 +76,8 @@ export function render({ ev }) {
       <div class="wave s"><span class="wave-dot"></span><span><b>Onda S</b><small id="w-s">viajando…</small></span></div>
     </div>
     <details class="how"><summary>Cómo lo calculamos</summary><div id="g-how"></div></details>
-    <button class="btn wide" id="share">Compartir mi resultado</button>
+    <button class="btn primary wide share-cta" id="share"><svg viewBox="0 0 24 24" width="20" height="20"><path d="M12 15V4m0 0L7.5 8.5M12 4l4.5 4.5M5 13v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>Compartir mi resultado</button>
+    <p class="share-hint">WhatsApp · Historia de Instagram · enlace</p>
   </section>`;
 }
 
@@ -114,6 +124,8 @@ function adjustments(base) {
 export function mount(el, ctx) {
   const { ev } = ctx;
   let spot = store.get(`onda-tu-${ev.id}`, {}).spot || null;
+  // A shared link (#/tu?lat=…&lon=…) opens that result.
+  if (sharedSpot) { spot = sharedSpot; sharedSpot = null; history.replaceState(null, '', location.pathname + location.search + '#/tu'); }
   let shown = 0;
   const save = () => store.set(`onda-tu-${ev.id}`, { ...choice, spot });
   // Once you've picked a spot, cards stop at the map's edge on phones so the 3D city stays in view.
@@ -159,7 +171,7 @@ export function mount(el, ctx) {
       ${list.map(([t, v]) => `<div class="how-row"><span>${esc(t)}</span><b>${v > 0 ? '+' : '−'}${num(Math.abs(v), 1)}</b></div>`).join('')}
       <div class="how-row total"><span>Tu intensidad</span><b>${num(total, 1)}</b></div>
       <p class="muted small">Estás a ${int(distance)} km del epicentro. La escala va de 1 (nadie lo siente) a 10 (destrucción). Los ajustes son aproximados.</p>`;
-    $('#share', el).onclick = () => share(total, spot.name);
+    $('#share', el).onclick = () => openShare({ ev, total, spot, choice, distance });
     if (replayWaves) {
       $('#w-p', el).textContent = 'viajando…'; $('#w-s', el).textContent = 'viajando…';
       $$('.wave', el).forEach(w => w.classList.remove('hit'));
@@ -395,12 +407,6 @@ export function mount(el, ctx) {
   if (spot) pick(spot.lat, spot.lon, spot.name);
   requestAnimationFrame(() => $$('.reveal', el).forEach(n => n.classList.add('in')));
 
-  function share(total, name) {
-    const text = `Según Onda, el sismo M${num(ev.mag, 1)} se sintió con intensidad ${num(total, 1)} (${mmiInfo(total).name.toLowerCase()})${name ? ` en ${name}` : ' donde yo estaba'}.`;
-    const url = location.href.split('#')[0] + '#/tu';
-    if (navigator.share) navigator.share({ title: 'Mi intensidad', text, url }).catch(() => {});
-    else navigator.clipboard?.writeText(`${text} ${url}`).then(() => { $('#share', el).textContent = 'Copiado'; });
-  }
 }
 
 export function unmount() { sheetOff?.(); sheetOff = null; document.body.classList.remove('map-clear'); offClick?.(); offClick = null; tower?.destroy(); tower = null; clearYou(); }
