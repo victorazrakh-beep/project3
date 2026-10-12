@@ -10,12 +10,16 @@
   <meta property="og:description" content="Cuánto sentiste el sismo, réplicas en vivo y qué revisar en tu casa.">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icon.svg">
+  <link rel="preconnect" href="https://earthquake.usgs.gov" crossorigin>
+  <link rel="preconnect" href="https://basemaps.cartocdn.com" crossorigin>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css">
   <link rel="stylesheet" href="css/app.css">
-  <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
+  <link rel="preload" href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js" as="script" crossorigin>
+  <link rel="modulepreload" href="js/data.js">
+  <link rel="modulepreload" href="js/util.js">
 </head>
 <body data-route="ahora">
   <div id="map" aria-label="Mapa del sismo y sus réplicas"></div>

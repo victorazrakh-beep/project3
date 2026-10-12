@@ -1,7 +1,7 @@
 // Shell: loads the quake, keeps aftershocks live, and swaps screens over the map.
 import { $, esc, num, ago, placeES, shortPlace, haptic, magColor } from './util.js';
-import { loadEvent, loadAftershocks, loadRecent } from './data.js';
-import { initMap, showEvent, setAftershocks, frame, stopSequence, clearYou } from './map.js';
+import { detail, loadEvent, loadAftershocks, loadRecent, loadLocal, refreshLocal } from './data.js';
+import { initMap, showEvent, setAftershocks, setLocal, frame, stopSequence, clearYou } from './map.js';
 import * as ahora from './views/ahora.js';
 import * as tu from './views/tu.js';
 import * as ciudades from './views/ciudades.js';
@@ -12,12 +12,15 @@ const DEFAULT_EVENT = 'us6000u18k'; // M7.7 Panamá, 9 de octubre de 2026
 const ROUTES = { '': ahora, tu, ciudades, casa, ciencia };
 const POLL_MS = 60_000;
 
-const ctx = { ev: null, shocks: [], current: null };
+const ctx = { ev: null, shocks: [], local: null, current: null };
 const view = $('#view');
 
 async function start() {
   const id = new URLSearchParams(location.search).get('e') || DEFAULT_EVENT;
-  const mapReady = initMap($('#map'));
+  // Aftershocks only need the epicenter, so they download alongside the bigger ShakeMap files.
+  const shocksReady = detail(id).then(r => loadAftershocks({ id: r.id, mag: r.properties.mag, time: r.properties.time,
+    lon: r.geometry.coordinates[0], lat: r.geometry.coordinates[1] })).catch(() => []);
+  const localReady = loadLocal().catch(() => null);
   try {
     ctx.ev = await loadEvent(id);
   } catch {
@@ -28,14 +31,19 @@ async function start() {
   }
   document.title = `M${num(ctx.ev.mag, 1)} ${shortPlace(ctx.ev.place)} · Onda`;
   renderChip();
-  ctx.shocks = await loadAftershocks(ctx.ev).catch(() => []);
-  await mapReady;
-  showEvent(ctx.ev, { intro: true });
-  setAftershocks(ctx.shocks);
+  const [shocks, local] = await Promise.all([shocksReady, localFor(ctx.ev, () => localReady)]);
+  ctx.shocks = shocks;
+  ctx.local = local;
   addEventListener('hashchange', route);
   route();
-  setInterval(poll, POLL_MS);
   document.body.classList.add('ready');
+  // Building the 3D map is the heaviest step, so it starts only once the screen is showing.
+  await new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)));
+  await initMap($('#map'));
+  showEvent(ctx.ev, { intro: true });
+  setAftershocks(ctx.shocks);
+  setLocal(ctx.local?.events);
+  setInterval(poll, POLL_MS);
 }
 
 function routeName() { return location.hash.replace(/^#\/?/, '').split('?')[0]; }
@@ -60,8 +68,24 @@ function route() {
   if (document.startViewTransition && !first) document.startViewTransition(swap); else swap();
 }
 
+/** The local network only covers Panamá, so it's used only for quakes there. */
+async function localFor(ev, load) {
+  if (!ev.inPanama) return null;
+  const data = await load().catch(() => null);
+  if (!data) return null;
+  // Leave out the main shock itself (the local network rates it with its own magnitude).
+  const isMain = e => Math.abs(e.time - ev.time) < 180_000 && e.mag >= ev.mag - 1.2;
+  return { updated: data.updated, events: data.events.filter(e => e.time >= ev.time - 60_000 && !isMain(e))
+    .map(e => ({ ...e, place: e.place.replace(/^Panamá a /, 'A ') })) };
+}
+
+let polls = 0;
 async function poll() {
   if (document.hidden) return;
+  if (ctx.ev.inPanama && ++polls % 5 === 0) { // the local list is rebuilt every ~10 minutes
+    const local = await localFor(ctx.ev, refreshLocal);
+    if (local) { ctx.local = local; setLocal(local.events); ctx.current?.onLocal?.(local); }
+  }
   const latest = await loadAftershocks(ctx.ev).catch(() => null);
   if (!latest) return;
   const known = new Set(ctx.shocks.map(s => s.id));

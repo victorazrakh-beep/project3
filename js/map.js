@@ -3,6 +3,13 @@ import { circle, mmiRGB, magColor, mmiColor, esc, num, shortTime, reduceMotion }
 import { aftershockRadius } from './data.js';
 
 const STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
+const LIB = 'https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js';
+
+// The map library is big; load it without holding up the rest of the page.
+const loadLib = () => window.maplibregl ? Promise.resolve() : new Promise((resolve, reject) => {
+  const script = Object.assign(document.createElement('script'), { src: LIB, crossOrigin: 'anonymous', onload: resolve, onerror: reject });
+  document.head.append(script);
+});
 const empty = () => ({ type: 'FeatureCollection', features: [] });
 const pt = (lon, lat, props = {}) => ({ type: 'Feature', properties: props, geometry: { type: 'Point', coordinates: [lon, lat] } });
 
@@ -10,6 +17,11 @@ let map, ready, ev, epicenter, youMarker, popup;
 let playing = null, waveAnim = null, flashAnim = null;
 
 export function initMap(el) {
+  ready = loadLib().then(() => new Promise(resolve => create(el, resolve)));
+  return ready;
+}
+
+function create(el, resolve) {
   map = new maplibregl.Map({
     container: el, style: STYLE, center: [-40, 15], zoom: 1.3,
     attributionControl: { compact: true }, pitchWithRotate: false, dragRotate: false,
@@ -17,15 +29,14 @@ export function initMap(el) {
   });
   map.touchZoomRotate.disableRotation();
   popup = new maplibregl.Popup({ closeButton: false, closeOnClick: true, className: 'map-pop', offset: 10 });
-  ready = new Promise(resolve => map.on('load', () => { setup(); resolve(); }));
+  map.on('load', () => { setup(); el.classList.add('on'); resolve(); });
   map.on('style.load', () => { try { map.setProjection({ type: 'globe' }); } catch { /* older engines: flat map */ } });
-  return ready;
 }
 
 function setup() {
   const before = map.getStyle().layers.find(l => l.type === 'symbol')?.id;
   const add = (layer, under = before) => map.addLayer(layer, under);
-  for (const id of ['contours', 'aftershocks', 'flash', 'waves', 'cities', 'link']) map.addSource(id, { type: 'geojson', data: empty() });
+  for (const id of ['contours', 'local', 'aftershocks', 'flash', 'waves', 'cities', 'link']) map.addSource(id, { type: 'geojson', data: empty() });
 
   add({ id: 'waves-fill', type: 'fill', source: 'waves', paint: { 'fill-color': ['get', 'color'], 'fill-opacity': ['get', 'fill'] } });
   add({ id: 'waves-line', type: 'line', source: 'waves', paint: { 'line-color': ['get', 'color'], 'line-width': ['get', 'width'], 'line-opacity': ['get', 'opacity'], 'line-blur': 0.6 } });
@@ -35,6 +46,11 @@ function setup() {
   add({ id: 'flash', type: 'circle', source: 'flash', paint: {
     'circle-radius': ['get', 'r'], 'circle-color': 'rgba(0,0,0,0)',
     'circle-stroke-color': ['get', 'color'], 'circle-stroke-width': 2, 'circle-stroke-opacity': ['get', 'o'] } }, undefined);
+  // Panamá's own network catches many small quakes the USGS doesn't list: drawn as hollow rings.
+  add({ id: 'local', type: 'circle', source: 'local', paint: {
+    'circle-radius': ['interpolate', ['exponential', 1.6], ['get', 'mag'], 2, 2.5, 4, 5, 5, 8, 6, 12],
+    'circle-color': 'rgba(0,0,0,0)', 'circle-stroke-color': ['get', 'color'], 'circle-stroke-width': 1.3,
+    'circle-stroke-opacity': ['get', 'o'] } }, undefined);
   add({ id: 'aftershocks', type: 'circle', source: 'aftershocks', paint: {
     'circle-radius': ['interpolate', ['exponential', 1.6], ['get', 'mag'], 2.5, 2.5, 4, 5, 5, 8, 6, 13, 7, 20],
     'circle-color': ['get', 'color'], 'circle-opacity': ['get', 'o'],
@@ -47,17 +63,25 @@ function setup() {
     const p = e.features[0].properties;
     popup.setLngLat(e.lngLat).setHTML(`<b>M ${num(p.mag, 1)}</b><span>${esc(p.place)}</span><small>${esc(shortTime(p.time))}</small>`).addTo(map);
   });
+  map.on('click', 'local', e => {
+    const p = e.features[0].properties;
+    popup.setLngLat(e.lngLat).setHTML(`<b>M ${num(p.mag, 1)} · red local</b><span>${esc(p.place)}</span><small>${esc(shortTime(p.time))}</small>`).addTo(map);
+  });
   map.on('click', 'cities', e => {
     const p = e.features[0].properties;
     popup.setLngLat(e.lngLat).setHTML(`<b>${esc(p.name)}</b><span>Intensidad ${num(p.mmi, 1)}</span>`).addTo(map);
   });
-  for (const id of ['aftershocks', 'cities']) {
+  for (const id of ['aftershocks', 'local', 'cities']) {
     map.on('mouseenter', id, () => { map.getCanvas().style.cursor = 'pointer'; });
     map.on('mouseleave', id, () => { map.getCanvas().style.cursor = ''; });
   }
 }
 
-export const onMapClick = handler => { map.on('click', handler); return () => map.off('click', handler); };
+export const onMapClick = handler => {
+  let off = false;
+  ready.then(() => { if (!off) map.on('click', handler); });
+  return () => { off = true; map?.off('click', handler); };
+};
 
 /** Loads a quake onto the map and flies in from space. */
 export async function showEvent(event, { intro = false } = {}) {
@@ -103,7 +127,7 @@ function drawShake() {
 
 /** Frames the map for a screen. On phones the panel covers the bottom, so pad for it. */
 export function frame(scene, { animate = true, extra } = {}) {
-  if (!ev) return;
+  if (!ev || !map?.loaded()) return;
   const wide = innerWidth >= 900;
   const mapH = innerHeight * (['casa', 'ciencia'].includes(document.body.dataset.route) ? 0.3 : 0.44);
   const padding = wide ? { top: 90, bottom: 60, left: 520, right: 60 } : { top: 80, bottom: innerHeight - mapH + 10, left: 20, right: 20 };
@@ -116,6 +140,7 @@ export function frame(scene, { animate = true, extra } = {}) {
   map.fitBounds([[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]], { padding, duration, maxZoom: 9, essential: true });
   map.setLayoutProperty('cities', 'visibility', scene === 'cities' ? 'visible' : 'none');
   map.setPaintProperty('aftershocks', 'circle-opacity', scene === 'cities' ? 0.15 : ['get', 'o']);
+  map.setLayoutProperty('local', 'visibility', scene === 'cities' ? 'none' : 'visible');
   if (scene !== 'you') clearYou();
 }
 
@@ -175,9 +200,18 @@ export function playSequence(onTick, seconds = 14) {
   });
 }
 export function stopSequence() {
+  if (!map) return;
   if (playing) cancelAnimationFrame(playing);
   playing = null;
   if (shocks.length) renderShocks(Infinity);
+}
+
+/** Quakes from the Universidad de Panamá network, from the main shock on. */
+export async function setLocal(list) {
+  await ready;
+  const now = Date.now();
+  map.getSource('local').setData({ type: 'FeatureCollection', features: (list || []).map(s => pt(s.lon, s.lat, {
+    mag: s.mag, place: s.place, time: s.time, color: magColor(s.mag), o: Math.max(0.35, 0.9 - (now - s.time) / (7 * 864e5) * 0.5) })) });
 }
 
 // ---- Waves ----
@@ -207,7 +241,8 @@ function shockwave() {
  * You vs the quake: P and S waves travel to your spot in slow motion.
  * Calls onWave('p' | 's', secondsAfterOrigin) as each arrives.
  */
-export function showYou(lat, lon, distance, onWave) {
+export async function showYou(lat, lon, distance, onWave) {
+  await ready;
   clearYou();
   const el = document.createElement('div');
   el.className = 'you';
@@ -245,5 +280,5 @@ export async function showCities(cities) {
 }
 
 export function focusPoint(lon, lat, zoom = 9) {
-  map.flyTo({ center: [lon, lat], zoom, duration: reduceMotion() ? 0 : 1400, essential: true });
+  map?.flyTo({ center: [lon, lat], zoom, duration: reduceMotion() ? 0 : 1400, essential: true });
 }

@@ -8,9 +8,10 @@ const ALERTS = {
   orange: ['Impacto importante', 'Es probable que haya daños en una zona amplia.'],
   red: ['Impacto extenso', 'El USGS estima daños graves y extendidos.'],
 };
+const GROUND = { green: 'verde', yellow: 'amarilla', orange: 'naranja', red: 'roja' };
 const PERIODS = { '1 Day': 'el próximo día', '1 Week': 'la próxima semana', '1 Month': 'el próximo mes', '1 Year': 'el próximo año' };
 
-export function render({ ev, shocks }) {
+export function render({ ev, shocks, local }) {
   const strong = ev.exposure ? ev.exposure.aggregated_exposure.slice(5).reduce((a, b) => a + b, 0) : null;
   const biggest = shocks.reduce((a, b) => (!a || b.mag > a.mag ? b : a), null);
   const alert = ALERTS[ev.alert];
@@ -25,6 +26,8 @@ export function render({ ev, shocks }) {
       <span class="chip">${int(ev.depth)} km de profundidad</span>
       ${alert ? `<span class="chip alert-${ev.alert}" title="${esc(alert[1])}">${alert[0]}</span>` : ''}
       ${ev.tsunami ? '<span class="chip warn">Revisa avisos de tsunami</span>' : ''}
+      ${ev.groundFailure?.landslide ? `<span class="chip alert-${ev.groundFailure.landslide}" title="Estimación del USGS">Deslizamientos: alerta ${GROUND[ev.groundFailure.landslide] || ''}</span>` : ''}
+      ${ev.groundFailure?.liquefaction ? `<span class="chip alert-${ev.groundFailure.liquefaction}" title="Estimación del USGS">Licuefacción: alerta ${GROUND[ev.groundFailure.liquefaction] || ''}</span>` : ''}
     </div>
   </section>
 
@@ -48,6 +51,8 @@ export function render({ ev, shocks }) {
 
   ${forecastHTML(ev)}
 
+  ${local ? `<section class="card reveal" id="local-card">${localHTML(local)}</section>` : ''}
+
   <section class="card reveal">
     <div class="row-between"><h2>Últimas réplicas</h2><span class="live"><span class="pulse-dot"></span> En vivo</span></div>
     <div class="quake-list" id="quake-list">${listHTML(shocks)}</div>
@@ -67,6 +72,27 @@ function listHTML(shocks) {
       <span class="grow"><b>${esc(placeES(s.place))}</b><small>${esc(shortTime(s.time))} · ${int(s.depth)} km</small></span>
       <small class="muted">${esc(ago(s.time))}</small>
     </button>`).join('');
+}
+
+function localHTML(local) {
+  const events = local.events, day = Date.now() - 864e5;
+  const lastDay = events.filter(e => e.time >= day).length;
+  const strongest = events.reduce((a, b) => (!a || b.mag > a.mag ? b : a), null);
+  return `
+    <div class="row-between"><h2>Red sísmica de Panamá</h2><span class="legend"><i class="ring"></i> en el mapa</span></div>
+    <p class="muted small">El Instituto de Geociencias de la Universidad de Panamá registra sismos más pequeños que el USGS no publica.</p>
+    <div class="mini-stats">
+      <div><b data-count="${events.length}">0</b><small>réplicas registradas</small></div>
+      <div><b data-count="${lastDay}">0</b><small>en las últimas 24 horas</small></div>
+      ${strongest ? `<div><b>M${num(strongest.mag, 1)}</b><small>la mayor réplica</small></div>` : ''}
+    </div>
+    <div class="quake-list">${events.slice(0, 5).map(s => `
+      <button class="quake" data-lon="${s.lon}" data-lat="${s.lat}">
+        <span class="mag-dot hollow" style="--c:${magColor(s.mag)}">${num(s.mag, 1)}</span>
+        <span class="grow"><b>${esc(s.place)}</b><small>${esc(shortTime(s.time))} · ${int(s.depth)} km · ${s.status === 'revisado' ? 'revisado' : 'preliminar'}</small></span>
+        <small class="muted">${esc(ago(s.time))}</small>
+      </button>`).join('')}</div>
+    <p class="muted small">Fuente: <a href="https://sismosgeociencias.up.ac.pa/" target="_blank" rel="noopener">Instituto de Geociencias (UP)</a> · actualizado ${esc(ago(local.updated))}</p>`;
 }
 
 function forecastHTML(ev) {
@@ -122,6 +148,11 @@ export function onShocks(shocks) {
   if (list) list.innerHTML = listHTML(shocks);
   const count = document.getElementById('stat-count');
   if (count) count.textContent = int(shocks.length);
+}
+
+export function onLocal(local) {
+  const card = document.getElementById('local-card');
+  if (card) { card.innerHTML = localHTML(local); card.querySelectorAll('[data-count]').forEach(n => { n.textContent = int(+n.dataset.count); }); }
 }
 
 export const unmount = () => stopSequence();

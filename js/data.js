@@ -13,7 +13,7 @@ const optional = url => url ? json(url).catch(() => null) : Promise.resolve(null
 
 /** The quake itself, plus every USGS product we use (any of which may be missing). */
 export async function loadEvent(id) {
-  const raw = await json(`${API}?eventid=${encodeURIComponent(id)}&format=geojson`);
+  const raw = await detail(id);
   const p = raw.properties;
   const [lon, lat, depth] = raw.geometry.coordinates;
   const products = p.products || {};
@@ -48,11 +48,94 @@ export async function loadEvent(id) {
     exposure: exposure?.population_exposure || null,
     forecast: forecast?.forecast || null,
     forecastTimes: forecast ? { created: forecast.creationTime, next: forecast.nextForecastTime } : null,
+    dyfiUrl: file('dyfi', 'dyfi_geo_10km.geojson') || null,
+    historyUrl: file('losspager', 'json/historical_earthquakes.json') || null,
+    groundFailure: groundFailure(products['ground-failure']?.[0]?.properties),
     mechanism: mt['nodal-plane-1-rake'] != null ? {
       strike: +mt['nodal-plane-1-strike'], dip: +mt['nodal-plane-1-dip'], rake: +mt['nodal-plane-1-rake'],
       moment: +mt['scalar-moment'] || null,
     } : null,
   };
+}
+
+function groundFailure(p) {
+  if (!p) return null;
+  return {
+    landslide: p['landslide-alert'] || null,
+    liquefaction: p['liquefaction-alert'] || null,
+    landslidePeople: +p['landslide-population-alert-value'] || 0,
+    liquefactionPeople: +p['liquefaction-population-alert-value'] || 0,
+  };
+}
+
+const details = new Map();
+/** The event record, fetched once (the shell asks for it early to overlap with other downloads). */
+export function detail(id) {
+  if (!details.has(id)) details.set(id, json(`${API}?eventid=${encodeURIComponent(id)}&format=geojson`).catch(e => { details.delete(id); throw e; }));
+  return details.get(id);
+}
+
+// Loaded only when a screen needs them, then kept.
+const memo = new Map();
+const once = (key, load) => { if (!memo.has(key)) memo.set(key, load().catch(e => { memo.delete(key); throw e; })); return memo.get(key); };
+
+/** "Did you feel it?" reports, averaged over 10 km squares. */
+export const loadDYFI = ev => once(`dyfi-${ev.id}`, async () => {
+  if (!ev.dyfiUrl) return [];
+  const data = await json(ev.dyfiUrl);
+  return data.features.map(f => {
+    const ring = f.geometry.coordinates[0];
+    const lon = ring.reduce((a, p) => a + p[0], 0) / ring.length, lat = ring.reduce((a, p) => a + p[1], 0) / ring.length;
+    return { lat, lon, cdi: f.properties.cdi, responses: f.properties.nresp, ring };
+  });
+});
+
+/** Strong past quakes near this one (USGS PAGER). */
+export const loadHistory = ev => once(`hist-${ev.id}`, async () => {
+  if (!ev.historyUrl) return [];
+  const list = await json(ev.historyUrl);
+  return list.map(h => ({ time: Date.parse(h.Time.replace(' ', 'T') + 'Z'), lat: h.Lat, lon: h.Lon, mag: h.Magnitude,
+    depth: h.Depth, deaths: h.TotalDeaths || 0, maxMMI: h.MaxMMI, distance: h.Distance, tsunami: !!h.Tsunami }))
+    .sort((a, b) => b.time - a.time);
+});
+
+/** Panamá's own seismic network (Universidad de Panamá), refreshed by a scheduled GitHub Action. */
+export const loadLocal = () => once('up', async () => {
+  const res = await fetch(`data/up.json?t=${Math.floor(Date.now() / 300000)}`);
+  if (!res.ok) return null;
+  return res.json();
+});
+export const refreshLocal = () => { memo.delete('up'); return loadLocal(); };
+
+// ---- Place search (Photon, built on OpenStreetMap) ----
+const PHOTON = 'https://photon.komoot.io';
+let searchCtl;
+function photonPlace(f) {
+  const p = f.properties, [lon, lat] = f.geometry.coordinates;
+  const detail = [p.district, p.city !== p.name ? p.city : null, p.county, p.state, p.country].filter(Boolean)
+    .filter((v, i, a) => a.indexOf(v) === i).slice(0, 3).join(', ');
+  const name = p.name || [p.street, p.housenumber].filter(Boolean).join(' ') || p.district || p.city || 'Lugar sin nombre';
+  return { name, detail, lat, lon };
+}
+/**
+ * Searches places in the area the quake shook (the ShakeMap extent), falling back to a
+ * search biased toward the epicenter. Cancels the previous search when a new one starts.
+ */
+export async function searchPlaces(query, ev) {
+  searchCtl?.abort();
+  searchCtl = new AbortController();
+  const { signal } = searchCtl;
+  const run = async extra => {
+    const q = new URLSearchParams({ q: query, limit: 8, ...extra });
+    const res = await fetch(`${PHOTON}/api/?${q}`, { signal });
+    if (!res.ok) throw new Error('search failed');
+    return (await res.json()).features.map(photonPlace);
+  };
+  const g = ev.grid;
+  let found = g ? await run({ bbox: [g.x0, g.y0, g.x1, g.y1].map(v => v.toFixed(3)).join(',') }) : [];
+  if (found.length < 3) found = found.concat(await run({ lat: ev.lat, lon: ev.lon, zoom: 7, location_bias_scale: 0.9 }));
+  const seen = new Set();
+  return found.filter(p => { const k = `${p.name}|${p.detail}`; return !seen.has(k) && seen.add(k); });
 }
 
 /** Rough rupture length (Wells & Coppersmith 1994) → how far out to look for aftershocks. */

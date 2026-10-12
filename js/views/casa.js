@@ -71,6 +71,18 @@ export function render({ ev }) {
     <h2>Para las próximas réplicas</h2>
     <ul class="ticks">${READY.map(t => `<li>${esc(t)}</li>`).join('')}</ul>
     <button class="btn ghost wide" id="reset">Empezar la revisión de nuevo</button>
+  </section>
+
+  <section class="card reveal">
+    <h2>Guías oficiales</h2>
+    <p class="muted small">Esta lista resume los criterios de estas guías. Ante la duda, sigue lo que digan las autoridades.</p>
+    <ul class="ticks sources">
+      ${ev.inPanama ? `<li><a href="https://www.sinaproc.gob.pa/mochila-de-72-horas-sinaproc/" target="_blank" rel="noopener">SINAPROC: la mochila de 72 horas</a></li>` : ''}
+      <li><a href="https://www.cenapred.unam.mx/es/Publicaciones/archivos/486-GUIA_RAPIDA_REVISION_VIVIENDA_TRAS_SISMO.PDF" target="_blank" rel="noopener">CENAPRED: guía rápida para revisar tu vivienda después de un sismo</a></li>
+      <li><a href="https://www.fema.gov/sites/default/files/2020-08/fema_earthquakes_fema-p-530-earthquake-safety-at-home-march-2020.pdf" target="_blank" rel="noopener">FEMA P-530: seguridad en casa ante sismos</a> (en inglés)</li>
+      <li><a href="https://atcouncil.org/pdfs/rapid.pdf" target="_blank" rel="noopener">ATC-20: evaluación rápida de edificios tras un sismo</a> (en inglés)</li>
+      ${ev.inPanama ? `<li><a href="https://superseguros.gob.pa/proteccion-al-consumidor-de-seguros/" target="_blank" rel="noopener">Superintendencia de Seguros: si vas a reclamar a tu seguro</a></li>` : ''}
+    </ul>
   </section>`;
 }
 

@@ -1,6 +1,7 @@
 // "Tú": your personal intensity, from the USGS shaking grid at your exact spot.
 import { $, $$, esc, num, int, roman, mmiInfo, mmiColor, MMI, ease, reduceMotion, haptic, store, shortPlace } from '../util.js';
-import { shakingAt } from '../data.js';
+import { shakingAt, searchPlaces, loadDYFI } from '../data.js';
+import { km } from '../util.js';
 import { showYou, onMapClick, clearYou } from '../map.js';
 
 const PLACES = [['casa', 'Casa'], ['edificio', 'Edificio'], ['afuera', 'Afuera'], ['vehiculo', 'En un carro']];
@@ -23,12 +24,14 @@ export function render({ ev }) {
       <svg viewBox="0 0 24 24" width="18" height="18"><circle cx="12" cy="12" r="3.2" fill="currentColor"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" stroke-width="2"/></svg>
       Usar mi ubicación
     </button>
-    ${ev.cities?.length ? `
-    <div class="search-wrap">
-      <input id="city" class="input" type="search" placeholder="O busca tu ciudad o pueblo" autocomplete="off" aria-label="Buscar ciudad">
-      <div class="suggest" id="suggest" hidden></div>
-    </div>` : ''}
-    <p class="muted small">También puedes tocar el mapa. Tu ubicación no sale de este teléfono.</p>
+    <div class="search-wrap" role="combobox" aria-expanded="false" aria-haspopup="listbox">
+      <svg class="search-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <input id="city" class="input search" type="search" placeholder="Busca tu barrio, calle o pueblo" autocomplete="off" enterkeyhint="search"
+        aria-label="Buscar un lugar" aria-autocomplete="list" aria-controls="suggest">
+      <span class="search-spin" id="search-spin" hidden></span>
+      <div class="suggest" id="suggest" role="listbox" hidden></div>
+    </div>
+    <p class="muted small">También puedes tocar el mapa. Tu ubicación GPS no sale de este teléfono; las búsquedas usan OpenStreetMap.</p>
     <p class="picked" id="picked" hidden></p>
   </section>
 
@@ -51,6 +54,7 @@ export function render({ ev }) {
     </div>
     <h2 class="result-name" id="g-name"></h2>
     <p class="lead center" id="g-text"></p>
+    <p class="dyfi" id="dyfi" hidden></p>
     <div class="waves" id="waves">
       <div class="wave p"><span class="wave-dot"></span><span><b>Onda P</b><small id="w-p">viajando…</small></span></div>
       <div class="wave s"><span class="wave-dot"></span><span><b>Onda S</b><small id="w-s">viajando…</small></span></div>
@@ -151,7 +155,27 @@ export function mount(el, ctx) {
     requestAnimationFrame(step);
   }
 
+  function nearestTown(lat, lon, prefix) {
+    let best = null, dist = Infinity;
+    for (const c of ev.cities || []) { const d = km(lat, lon, c.lat, c.lon); if (d < dist) { dist = d; best = c; } }
+    const near = best && dist < 25 ? (dist < 2 ? best.name : `cerca de ${best.name}`) : null;
+    return prefix ? (near ? `${prefix}, ${near}` : prefix) : (near ? near[0].toUpperCase() + near.slice(1) : null);
+  }
+
+  async function reports(lat, lon) {
+    const box = $('#dyfi', el);
+    const cells = await loadDYFI(ev).catch(() => []);
+    let best = null, dist = Infinity;
+    for (const c of cells) { const d = km(lat, lon, c.lat, c.lon); if (d < dist) { dist = d; best = c; } }
+    if (!best || dist > 12) { box.hidden = true; return; }
+    box.hidden = false;
+    box.innerHTML = `<span class="dot" style="--c:${mmiColor(best.cdi)}"></span><span>
+      <b>${best.responses === 1 ? 'Una persona' : `${int(best.responses)} personas`} en tu zona ${best.responses === 1 ? 'reportó' : 'reportaron'} intensidad ${num(best.cdi, 1)}</b>
+      <small>Respuestas a "¿Lo sentiste?" del USGS, en cuadros de 10 km.</small></span>`;
+  }
+
   function pick(lat, lon, name) {
+    reports(lat, lon);
     spot = { lat, lon, name };
     const p = $('#picked', el);
     p.hidden = false;
@@ -165,7 +189,7 @@ export function mount(el, ctx) {
     if (!navigator.geolocation) { btn.textContent = 'Tu navegador no permite ubicación'; return; }
     btn.classList.add('busy');
     navigator.geolocation.getCurrentPosition(
-      pos => { btn.classList.remove('busy'); pick(pos.coords.latitude, pos.coords.longitude, 'Tu ubicación'); },
+      pos => { btn.classList.remove('busy'); const { latitude: la, longitude: lo } = pos.coords; pick(la, lo, nearestTown(la, lo, 'Tu ubicación')); },
       err => {
         btn.classList.remove('busy');
         const p = $('#picked', el);
@@ -175,19 +199,73 @@ export function mount(el, ctx) {
       { enableHighAccuracy: false, timeout: 12000, maximumAge: 600000 });
   });
 
-  const input = $('#city', el), suggest = $('#suggest', el);
-  input?.addEventListener('input', () => {
-    const q = input.value.trim().toLowerCase().normalize('NFD').replace(/\p{M}/gu, '');
-    const matches = q.length < 2 ? [] : ev.cities.filter(c => c.name.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '').includes(q)).slice(0, 6);
-    suggest.hidden = !matches.length;
-    suggest.innerHTML = matches.map(c => `<button data-lat="${c.lat}" data-lon="${c.lon}" data-name="${esc(c.name)}">${esc(c.name)}<small>${c.pop >= 1000 ? `${int(c.pop)} hab.` : ''}</small></button>`).join('');
-  });
-  suggest?.addEventListener('click', e => {
-    const b = e.target.closest('button');
-    if (!b) return;
-    input.value = b.dataset.name;
+  const input = $('#city', el), suggest = $('#suggest', el), spin = $('#search-spin', el);
+  const fold = t => t.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '');
+  let results = [], active = -1, timer, seq = 0;
+  const preview = r => mmiColor(shakingAt(ev, r.lat, r.lon).mmi);
+  function show() {
+    suggest.hidden = !results.length && !input.value.trim();
+    input.parentElement.setAttribute('aria-expanded', !suggest.hidden);
+    suggest.innerHTML = results.length ? results.map((r, i) => `
+      <button role="option" id="opt-${i}" aria-selected="${i === active}" data-i="${i}">
+        <span class="dot" style="--c:${preview(r)}"></span>
+        <span class="grow"><b>${esc(r.name)}</b><small>${esc(r.detail || '')}</small></span>
+        ${r.local ? '<em class="tag">USGS</em>' : ''}
+      </button>`).join('')
+      : `<p class="muted small pad">${spin.hidden ? 'No encontramos ese lugar. Prueba con el nombre del pueblo o toca el mapa.' : 'Buscando…'}</p>`;
+    input.setAttribute('aria-activedescendant', active >= 0 ? `opt-${active}` : '');
+  }
+  function choose(r) {
+    input.value = r.name;
+    results = []; active = -1;
     suggest.hidden = true;
-    pick(+b.dataset.lat, +b.dataset.lon, `${b.dataset.name}, ${shortPlace(ev.place)}`);
+    input.blur();
+    pick(r.lat, r.lon, r.detail ? `${r.name}, ${r.detail.split(', ')[0]}` : r.name);
+  }
+  input.addEventListener('input', () => {
+    const q = input.value.trim(), fq = fold(q), mine = ++seq;
+    clearTimeout(timer);
+    // Towns the USGS already rated show up instantly; OpenStreetMap fills in streets and barrios.
+    const local = q.length < 2 ? [] : (ev.cities || []).filter(c => fold(c.name).startsWith(fq) || fold(c.name).includes(` ${fq}`))
+      .slice(0, 3).map(c => ({ name: c.name, detail: shortPlace(ev.place), lat: c.lat, lon: c.lon, local: true }));
+    results = local; active = local.length ? 0 : -1;
+    if (q.length < 3) { spin.hidden = true; show(); return; }
+    spin.hidden = false; show();
+    timer = setTimeout(async () => {
+      try {
+        const found = await searchPlaces(q, ev);
+        if (mine !== seq) return;
+        const near = found.filter(f => !local.some(l => km(l.lat, l.lon, f.lat, f.lon) < 2 && fold(l.name) === fold(f.name)));
+        results = [...local, ...near].slice(0, 8);
+        active = results.length ? 0 : -1;
+      } catch (e) {
+        if (e.name === 'AbortError') return;
+      }
+      spin.hidden = true;
+      show();
+    }, 220);
+  });
+  input.addEventListener('keydown', e => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (!results.length) return;
+      e.preventDefault();
+      active = (active + (e.key === 'ArrowDown' ? 1 : -1) + results.length) % results.length;
+      show();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (results[active]) choose(results[active]);
+    } else if (e.key === 'Escape') { suggest.hidden = true; }
+  });
+  input.addEventListener('focus', () => {
+    if (results.length) show();
+    // On phones, lift the search box toward the top so the suggestions clear the keyboard and tab bar.
+    if (innerWidth < 900) el.scrollTo({ top: input.closest('.card').offsetTop - 70, behavior: reduceMotion() ? 'auto' : 'smooth' });
+  });
+  input.addEventListener('blur', () => setTimeout(() => { suggest.hidden = true; }, 180));
+  suggest.addEventListener('pointerdown', e => e.preventDefault()); // keep focus so the tap lands
+  suggest.addEventListener('click', e => {
+    const b = e.target.closest('[data-i]');
+    if (b) choose(results[+b.dataset.i]);
   });
 
   for (const seg of $$('.seg', el)) {
@@ -211,7 +289,7 @@ export function mount(el, ctx) {
 
   offClick = onMapClick(e => {
     if (e.defaultPrevented) return;
-    pick(e.lngLat.lat, e.lngLat.lng, null);
+    pick(e.lngLat.lat, e.lngLat.lng, nearestTown(e.lngLat.lat, e.lngLat.lng));
   });
 
   if (spot) pick(spot.lat, spot.lon, spot.name);
