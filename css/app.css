@@ -547,25 +547,6 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .osm-bldg { flex: none; width: 18px; height: calc(10px + var(--n) * 1px); max-height: 40px; border-radius: 3px 3px 0 0;
   background: repeating-linear-gradient(to top, rgba(255, 181, 71, .9) 0 3px, rgba(255, 181, 71, .35) 3px 5px); transform-origin: bottom; animation: grow-up .8s cubic-bezier(.2, 1.3, .4, 1); }
 @keyframes grow-up { from { transform: scaleY(0); } }
-@media (max-width: 899px) {
-  /* Tú after picking a spot: the cards scroll in their own box below the map, so the 3D city stays in view. */
-  body.map-clear .panel {
-    position: fixed; left: 0; right: 0; bottom: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; pointer-events: auto;
-    scrollbar-width: none; -webkit-overflow-scrolling: touch;
-    /* A long, eased fade: cards dissolve into the map instead of stopping at a hard line. */
-    top: calc(var(--map-h) - var(--fade)); padding-top: var(--fade);
-    background: var(--bg);
-    -webkit-mask-image: linear-gradient(transparent 0, rgba(0, 0, 0, .02) calc(var(--fade) * .3), rgba(0, 0, 0, .12) calc(var(--fade) * .5), rgba(0, 0, 0, .4) calc(var(--fade) * .7), rgba(0, 0, 0, .78) calc(var(--fade) * .87), #000 var(--fade));
-            mask-image: linear-gradient(transparent 0, rgba(0, 0, 0, .02) calc(var(--fade) * .3), rgba(0, 0, 0, .12) calc(var(--fade) * .5), rgba(0, 0, 0, .4) calc(var(--fade) * .7), rgba(0, 0, 0, .78) calc(var(--fade) * .87), #000 var(--fade));
-  }
-  /* The map answers the scroll: it drifts up a little and its lower edge darkens as the cards rise. */
-  body.map-clear #map { transform: translateY(calc(var(--sp, 0) * -26px)) scale(calc(1 + var(--sp, 0) * .035)); transform-origin: 50% 35%; transition: transform .35s cubic-bezier(.2, .8, .2, 1); }
-  body.map-clear .map-fade {
-    display: block; position: fixed; z-index: 5; left: 0; right: 0; top: 0; height: var(--map-h); pointer-events: none;
-    background: linear-gradient(to bottom, rgba(7, 9, 15, 0) 45%, rgba(7, 9, 15, .5) 85%, rgba(7, 9, 15, .8));
-    opacity: calc(.35 + var(--sp, 0) * .65); transition: opacity .35s;
-  }
-}
 :root { --fade: 96px; }
 .suggest-head { margin: 0; padding: 10px 14px 4px; color: var(--accent); font-size: 12px; font-weight: 700; letter-spacing: .04em; }
 /* "Made by" tag on the home screen */
@@ -814,9 +795,3 @@ body[data-route="ahora"] { --map-h: 40vh; }
 .ic-more { background: #2c3a52; }
 .share-lbl { font-size: 12.5px; font-weight: 600; text-align: center; line-height: 1.2; }
 .share-note { text-align: center; margin: 14px 8px 4px; }
-
-/* Tú on phones: the cards sit in their own scroll box, so the map must not claim one-finger swipes
-   (JS hands them to the box). touch-action none keeps the browser from also trying to pan the page. */
-@media (max-width: 899px) {
-  body.map-clear #map, body.map-clear #map .maplibregl-canvas-container, body.map-clear #map .maplibregl-canvas { touch-action: none !important; }
-}

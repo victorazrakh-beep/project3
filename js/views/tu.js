@@ -128,75 +128,19 @@ export function mount(el, ctx) {
   if (sharedSpot) { spot = sharedSpot; sharedSpot = null; history.replaceState(null, '', location.pathname + location.search + '#/tu'); }
   let shown = 0;
   const save = () => store.set(`onda-tu-${ev.id}`, { ...choice, spot });
-  // Once you've picked a spot, cards stop at the map's edge on phones so the 3D city stays in view.
-  // How tall the soft edge between the map and the cards is (CSS --fade).
-  const fade = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--fade')) || 96;
-  // The map reacts to the cards' scroll (CSS reads --sp, 0 → 1): it drifts and dims as the cards rise.
-  let spRaf = 0, rest = 0, orbitTimer = 0; // rest: where the result card is parked after a pick
-  const mapBox = document.getElementById('map'), mapShade = document.querySelector('.map-fade');
-  // Set on the two elements that use it, not on <body>, so every scroll frame doesn't restyle the whole page.
-  const setSp = v => { mapBox.style.setProperty('--sp', v); mapShade.style.setProperty('--sp', v); };
-  const onSheetScroll = () => {
-    // The 3D city is heavy on phones: let the map's slow drift rest while the cards move.
-    holdOrbit(true); clearTimeout(orbitTimer); orbitTimer = setTimeout(() => holdOrbit(false), 900);
-    if (spRaf) return;
-    spRaf = requestAnimationFrame(() => {
-      spRaf = 0;
-      const on = document.body.classList.contains('map-clear');
-      setSp(on ? Math.min(1, Math.max(0, el.scrollTop - rest) / 420).toFixed(3) : '0');
-    });
-  };
-  el.addEventListener('scroll', onSheetScroll, { passive: true });
-
-  // Phones: a one-finger swipe over the map scrolls the cards instead of dragging the map
-  // (taps still pick a spot and pinch still zooms). With the cards parked in their own box below
-  // the map, that box isn't under the finger, so the swipe is handed to it here, with a little momentum.
-  const mapEl = document.getElementById('map');
+  // Phones scroll the page exactly like "Ciudades": the cards rise over the map and use the whole screen.
+  // A one-finger swipe over the map scrolls the page instead of dragging the map (taps still pick a spot
+  // and pinch still zooms). Wide screens keep the cards in their own floating panel.
   const phone = () => innerWidth < 900;
   if (phone()) setSwipeScroll(true);
-  let swipeY = null, lastY = 0, lastT = 0, vel = 0, fling = 0, moved = false;
-  const swipeStart = e => {
-    cancelAnimationFrame(fling);
-    swipeY = null;
-    if (!phone() || !document.body.classList.contains('map-clear') || e.touches.length !== 1) return;
-    swipeY = lastY = e.touches[0].clientY; lastT = e.timeStamp; vel = 0; moved = false;
-  };
-  const swipeMove = e => {
-    if (swipeY === null) return;
-    if (e.touches.length !== 1) { swipeY = null; return; }
-    const y = e.touches[0].clientY;
-    if (!moved && Math.abs(y - swipeY) < 6) return; // a tap, not a swipe
-    moved = true;
-    const dy = lastY - y, dt = Math.max(1, e.timeStamp - lastT);
-    el.scrollTop += dy;
-    vel = vel * 0.7 + (dy / dt) * 0.3; lastY = y; lastT = e.timeStamp;
-  };
-  const swipeEnd = () => {
-    if (swipeY === null || !moved) { swipeY = null; return; }
-    swipeY = null;
-    let v = vel * 16;
-    const glide = () => { if (Math.abs(v) < 0.4) return; el.scrollTop += v; v *= 0.95; fling = requestAnimationFrame(glide); };
-    glide();
-  };
-  mapEl.addEventListener('touchstart', swipeStart, { passive: true });
-  mapEl.addEventListener('touchmove', swipeMove, { passive: true });
-  mapEl.addEventListener('touchend', swipeEnd, { passive: true });
-  mapEl.addEventListener('touchcancel', swipeEnd, { passive: true });
+  // The 3D city is heavy on phones: let the map's slow drift rest while the cards move.
+  let orbitTimer = 0;
+  const onScroll = () => { holdOrbit(true); clearTimeout(orbitTimer); orbitTimer = setTimeout(() => holdOrbit(false), 900); };
+  addEventListener('scroll', onScroll, { passive: true });
+  el.addEventListener('scroll', onScroll, { passive: true });
   sheetOff = () => {
-    el.removeEventListener('scroll', onSheetScroll); cancelAnimationFrame(spRaf); clearTimeout(orbitTimer); holdOrbit(false);
-    mapBox.style.removeProperty('--sp'); mapShade.style.removeProperty('--sp');
-    cancelAnimationFrame(fling);
-    for (const [t, f] of [['touchstart', swipeStart], ['touchmove', swipeMove], ['touchend', swipeEnd], ['touchcancel', swipeEnd]]) mapEl.removeEventListener(t, f);
-    setSwipeScroll(false);
-  };
-  const clearMap = () => {
-    const on = !!spot && document.activeElement !== $('#city', el);
-    if (document.body.classList.contains('map-clear') === on) return;
-    // The page and the card box line up exactly, so carry the scroll position across.
-    const phone = innerWidth < 900, y = on ? scrollY : el.scrollTop;
-    document.body.classList.toggle('map-clear', on);
-    if (phone) { if (on) el.scrollTop = y; else scrollTo(0, y); }
-    onSheetScroll();
+    removeEventListener('scroll', onScroll); el.removeEventListener('scroll', onScroll);
+    clearTimeout(orbitTimer); holdOrbit(false); setSwipeScroll(false);
   };
 
   function compute(replayWaves) {
@@ -235,8 +179,7 @@ export function mount(el, ctx) {
       const behavior = reduceMotion() ? 'auto' : 'smooth';
       setTimeout(() => innerWidth >= 900
         ? $('#result', el).scrollIntoView({ behavior, block: 'start' })
-        : document.body.classList.contains('map-clear') ? el.scrollTo({ top: (rest = $('#result', el).offsetTop - fade() + 8), behavior })
-          : scrollTo({ top: $('#result', el).offsetTop - innerHeight * 0.44 + 4, behavior }), 250);
+        : scrollTo({ top: $('#result', el).offsetTop - innerHeight * 0.44 + 4, behavior }), 250);
     }
     tower?.set({ mmi: total });
     save();
@@ -280,7 +223,6 @@ export function mount(el, ctx) {
   function pick(lat, lon, name) {
     reports(lat, lon);
     spot = { lat, lon, name };
-    clearMap();
     const p = $('#picked', el);
     p.hidden = false;
     p.innerHTML = `<span class="pin"></span> ${esc(name || `${num(lat, 3)}, ${num(lon, 3)}`)}`;
@@ -362,12 +304,11 @@ export function mount(el, ctx) {
     } else if (e.key === 'Escape') { suggest.hidden = true; }
   });
   input.addEventListener('focus', () => {
-    clearMap();
     if (results.length) show();
     // On phones, lift the search box toward the top so the suggestions clear the keyboard and tab bar.
     if (innerWidth < 900) scrollTo({ top: input.closest('.card').getBoundingClientRect().top + scrollY - 70 });
   });
-  input.addEventListener('blur', () => setTimeout(() => { suggest.hidden = true; clearMap(); }, 180));
+  input.addEventListener('blur', () => setTimeout(() => { suggest.hidden = true; }, 180));
   suggest.addEventListener('pointerdown', e => e.preventDefault()); // keep focus so the tap lands
   suggest.addEventListener('click', e => {
     const b = e.target.closest('[data-i]');
@@ -455,4 +396,4 @@ export function mount(el, ctx) {
 
 }
 
-export function unmount() { sheetOff?.(); sheetOff = null; document.body.classList.remove('map-clear'); offClick?.(); offClick = null; tower?.destroy(); tower = null; clearYou(); }
+export function unmount() { sheetOff?.(); sheetOff = null; offClick?.(); offClick = null; tower?.destroy(); tower = null; clearYou(); }
