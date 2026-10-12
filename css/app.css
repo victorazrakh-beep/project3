@@ -285,7 +285,7 @@ body[data-route="casa"], body[data-route="ciencia"] { --map-h: 30vh; }
 .needle-hub { fill: #fff; }
 .gauge-center { position: absolute; left: 0; right: 0; top: 58%; display: flex; flex-direction: column; align-items: center; }
 .gauge-n { font: 800 64px/1 var(--display); letter-spacing: -.04em; text-shadow: 0 0 40px currentColor; font-variant-numeric: tabular-nums; }
-.gauge-r { font: 700 14px var(--display); color: var(--muted); letter-spacing: .2em; }
+.gauge-r { font: 700 12px var(--display); color: var(--muted); letter-spacing: .2em; text-transform: uppercase; }
 .result-name { font-size: 30px; margin-top: 18px; }
 .waves { display: grid; gap: 10px; margin: 18px 0 6px; text-align: left; }
 .wave { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 14px; background: rgba(255, 255, 255, .04); transition: background .4s; }
@@ -509,3 +509,5 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .floor .floor-n { width: 64px; padding: 4px 0; border: 1px solid rgba(255, 255, 255, .12); border-radius: 10px; background: rgba(0, 0, 0, .25); color: var(--ink); font: 800 24px var(--display); text-align: center; font-variant-numeric: tabular-nums; -moz-appearance: textfield; appearance: textfield; }
 .floor .floor-n::-webkit-inner-spin-button, .floor .floor-n::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 .floor .floor-n:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(255, 181, 71, .25); }
+.scale-note { margin: 4px auto 0; max-width: 34em; padding: 10px 14px; border-radius: 12px; background: rgba(127, 212, 255, .07); color: var(--muted); font-size: 13px; text-align: center; }
+.scale-note b { color: var(--ink); }

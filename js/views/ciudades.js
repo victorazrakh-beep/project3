@@ -48,7 +48,7 @@ function rowHTML(c, i) {
     <span class="rank">${i + 1}</span>
     <span class="grow"><b>${esc(c.name)}</b>${c.iscap ? '<em class="cap">capital</em>' : ''}<small>${c.pop >= 1000 ? `${compact(c.pop)} habitantes` : ''}</small></span>
     <span class="city-bar"><span style="--w:${c.mmi / 10 * 100}%;--c:${mmiColor(c.mmi)}"></span></span>
-    <b class="city-mmi" style="color:${mmiColor(c.mmi)}">${num(c.mmi, 1)}</b>
+    <b class="city-mmi" style="color:${mmiColor(c.mmi)}">${roman(c.mmi)}</b>
   </button>`;
 }
 

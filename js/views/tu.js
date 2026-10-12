@@ -50,10 +50,11 @@ export function render({ ev }) {
 
   <section class="card result" id="result" hidden>
     <div class="gauge-wrap">${gaugeSVG()}
-      <div class="gauge-center"><span class="gauge-n" id="g-n">0</span><span class="gauge-r" id="g-r"></span></div>
+      <div class="gauge-center"><span class="gauge-n" id="g-n">I</span><span class="gauge-r" id="g-r"></span></div>
     </div>
     <h2 class="result-name" id="g-name"></h2>
     <p class="lead center" id="g-text"></p>
+    <p class="scale-note" id="g-note"></p>
     <p class="dyfi" id="dyfi" hidden></p>
     <div class="waves" id="waves">
       <div class="wave p"><span class="wave-dot"></span><span><b>Onda P</b><small id="w-p">viajando…</small></span></div>
@@ -109,15 +110,16 @@ export function mount(el, ctx) {
     $('#result', el).hidden = false;
     animateGauge(shown, total);
     shown = total;
-    $('#g-r', el).textContent = roman(total);
+    $('#g-r', el).textContent = 'intensidad';
     $('#g-name', el).textContent = info.name;
     $('#g-name', el).style.color = mmiColor(total);
     $('#g-text', el).textContent = info.text;
+    $('#g-note', el).innerHTML = `No es la magnitud. La <b>magnitud ${num(ev.mag, 1)}</b> mide la energía de todo el sismo y es una sola. La <b>intensidad</b> mide cuánto se sacudió cada lugar, de I a X, y por eso cambia de un punto a otro.`;
     $('#g-how', el).innerHTML = `
       <div class="how-row"><span>${source === 'shakemap' ? 'Sacudida del suelo en tu punto (ShakeMap del USGS)' : 'Sacudida estimada por distancia y magnitud'}</span><b>${num(mmi, 1)}</b></div>
       ${list.map(([t, v]) => `<div class="how-row"><span>${esc(t)}</span><b>${v > 0 ? '+' : '−'}${num(Math.abs(v), 1)}</b></div>`).join('')}
-      <div class="how-row total"><span>Tu intensidad</span><b>${num(total, 1)}</b></div>
-      <p class="muted small">Estás a ${int(distance)} km del epicentro. La escala va de 1 (nadie lo siente) a 10 (destrucción). Los ajustes son aproximados.</p>`;
+      <div class="how-row total"><span>Tu intensidad</span><b>${num(total, 1)} → ${roman(total)}</b></div>
+      <p class="muted small">Estás a ${int(distance)} km del epicentro. La escala de Mercalli va de I (nadie lo siente) a X o más (destrucción); los decimales son el valor exacto antes de redondear. Los ajustes son aproximados.</p>`;
     $('#share', el).onclick = () => share(total, spot.name);
     if (replayWaves) {
       $('#w-p', el).textContent = 'viajando…'; $('#w-s', el).textContent = 'viajando…';
@@ -148,7 +150,7 @@ export function mount(el, ctx) {
       const k = t < 1 ? ease(t) + Math.sin(t * Math.PI) * 0.06 : 1;
       const v = from + (to - from) * k;
       needle.style.transform = `rotate(${angle(v)}deg)`;
-      n.textContent = num(Math.max(1, Math.min(10, v)), 1);
+      n.textContent = roman(v);
       n.style.color = mmiColor(v);
       if (t < 1) requestAnimationFrame(step);
     };
@@ -170,7 +172,7 @@ export function mount(el, ctx) {
     if (!best || dist > 12) { box.hidden = true; return; }
     box.hidden = false;
     box.innerHTML = `<span class="dot" style="--c:${mmiColor(best.cdi)}"></span><span>
-      <b>${best.responses === 1 ? 'Una persona' : `${int(best.responses)} personas`} en tu zona ${best.responses === 1 ? 'reportó' : 'reportaron'} intensidad ${num(best.cdi, 1)}</b>
+      <b>${best.responses === 1 ? 'Una persona' : `${int(best.responses)} personas`} en tu zona ${best.responses === 1 ? 'reportó' : 'reportaron'} intensidad ${roman(best.cdi)}</b>
       <small>Respuestas a "¿Lo sentiste?" del USGS, en cuadros de 10 km.</small></span>`;
   }
 
@@ -304,7 +306,7 @@ export function mount(el, ctx) {
   requestAnimationFrame(() => $$('.reveal', el).forEach(n => n.classList.add('in')));
 
   function share(total, name) {
-    const text = `Según Onda, el sismo M${num(ev.mag, 1)} se sintió con intensidad ${num(total, 1)} (${mmiInfo(total).name.toLowerCase()})${name ? ` en ${name}` : ' donde yo estaba'}.`;
+    const text = `Según Onda, el sismo M${num(ev.mag, 1)} se sintió con intensidad ${roman(total)} (${mmiInfo(total).name.toLowerCase()})${name ? ` en ${name}` : ' donde yo estaba'}.`;
     const url = location.href.split('#')[0] + '#/tu';
     if (navigator.share) navigator.share({ title: 'Mi intensidad', text, url }).catch(() => {});
     else navigator.clipboard?.writeText(`${text} ${url}`).then(() => { $('#share', el).textContent = 'Copiado'; });

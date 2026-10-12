@@ -1,5 +1,5 @@
 // The living map behind every screen: globe intro, shaking heat, aftershocks, waves.
-import { circle, mmiRGB, magColor, mmiColor, esc, num, shortTime, reduceMotion } from './util.js';
+import { circle, mmiRGB, magColor, mmiColor, roman, esc, num, shortTime, reduceMotion } from './util.js';
 import { aftershockRadius } from './data.js';
 
 const STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
@@ -72,7 +72,7 @@ function setup() {
   });
   map.on('click', 'cities', e => {
     const p = e.features[0].properties;
-    popup.setLngLat(e.lngLat).setHTML(`<b>${esc(p.name)}</b><span>Intensidad ${num(p.mmi, 1)}</span>`).addTo(map);
+    popup.setLngLat(e.lngLat).setHTML(`<b>${esc(p.name)}</b><span>Intensidad ${roman(p.mmi)}</span>`).addTo(map);
   });
   for (const id of ['aftershocks', 'local', 'cities']) {
     map.on('mouseenter', id, () => { map.getCanvas().style.cursor = 'pointer'; });
