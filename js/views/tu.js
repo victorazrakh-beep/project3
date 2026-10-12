@@ -8,7 +8,7 @@ import { createTower, towerFacts } from '../tower.js';
 const PLACES = [['casa', 'Casa'], ['edificio', 'Edificio'], ['afuera', 'Afuera'], ['vehiculo', 'En un carro']];
 const GROUNDS = [['nose', 'No sé'], ['roca', 'Roca o loma'], ['firme', 'Tierra firme'], ['relleno', 'Relleno o junto al agua']];
 
-let choice, offClick, tower;
+let choice, offClick, tower, sheetOff;
 
 export function render({ ev }) {
   choice = { place: 'casa', floor: 3, floors: 10, ground: 'nose', ...store.get(`onda-tu-${ev.id}`, {}) };
@@ -117,6 +117,20 @@ export function mount(el, ctx) {
   let shown = 0;
   const save = () => store.set(`onda-tu-${ev.id}`, { ...choice, spot });
   // Once you've picked a spot, cards stop at the map's edge on phones so the 3D city stays in view.
+  // How tall the soft edge between the map and the cards is (CSS --fade).
+  const fade = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--fade')) || 96;
+  // The map reacts to the cards' scroll (CSS reads --sp, 0 → 1): it drifts and dims as the cards rise.
+  let spRaf = 0, rest = 0; // rest: where the result card is parked after a pick
+  const onSheetScroll = () => {
+    if (spRaf) return;
+    spRaf = requestAnimationFrame(() => {
+      spRaf = 0;
+      const on = document.body.classList.contains('map-clear');
+      document.body.style.setProperty('--sp', on ? Math.min(1, Math.max(0, el.scrollTop - rest) / 420).toFixed(3) : '0');
+    });
+  };
+  el.addEventListener('scroll', onSheetScroll, { passive: true });
+  sheetOff = () => { el.removeEventListener('scroll', onSheetScroll); cancelAnimationFrame(spRaf); document.body.style.removeProperty('--sp'); };
   const clearMap = () => {
     const on = !!spot && document.activeElement !== $('#city', el);
     if (document.body.classList.contains('map-clear') === on) return;
@@ -124,6 +138,7 @@ export function mount(el, ctx) {
     const phone = innerWidth < 900, y = on ? scrollY : el.scrollTop;
     document.body.classList.toggle('map-clear', on);
     if (phone) { if (on) el.scrollTop = y; else scrollTo(0, y); }
+    onSheetScroll();
   };
 
   function compute(replayWaves) {
@@ -162,7 +177,7 @@ export function mount(el, ctx) {
       const behavior = reduceMotion() ? 'auto' : 'smooth';
       setTimeout(() => innerWidth >= 900
         ? $('#result', el).scrollIntoView({ behavior, block: 'start' })
-        : document.body.classList.contains('map-clear') ? el.scrollTo({ top: $('#result', el).offsetTop - 12, behavior })
+        : document.body.classList.contains('map-clear') ? el.scrollTo({ top: (rest = $('#result', el).offsetTop - fade() + 8), behavior })
           : scrollTo({ top: $('#result', el).offsetTop - innerHeight * 0.44 + 4, behavior }), 250);
     }
     tower?.set({ mmi: total });
@@ -388,4 +403,4 @@ export function mount(el, ctx) {
   }
 }
 
-export function unmount() { document.body.classList.remove('map-clear'); offClick?.(); offClick = null; tower?.destroy(); tower = null; clearYou(); }
+export function unmount() { sheetOff?.(); sheetOff = null; document.body.classList.remove('map-clear'); offClick?.(); offClick = null; tower?.destroy(); tower = null; clearYou(); }
