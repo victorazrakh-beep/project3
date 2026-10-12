@@ -1,5 +1,5 @@
 // The living map behind every screen: globe intro, shaking heat, aftershocks, waves.
-import { circle, mmiRGB, magColor, mmiColor, roman, esc, num, shortTime, reduceMotion } from './util.js';
+import { circle, km, mmiRGB, magColor, mmiColor, esc, num, shortTime, reduceMotion } from './util.js';
 import { aftershockRadius } from './data.js';
 
 const STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
@@ -36,8 +36,10 @@ function create(el, resolve) {
   map.on('style.load', () => { try { map.setProjection({ type: 'globe' }); } catch { /* older engines: flat map */ } });
 }
 
+let labels;
 function setup() {
   const before = map.getStyle().layers.find(l => l.type === 'symbol')?.id;
+  labels = before;
   const add = (layer, under = before) => map.addLayer(layer, under);
   for (const id of ['contours', 'local', 'aftershocks', 'flash', 'waves', 'cities', 'link']) map.addSource(id, { type: 'geojson', data: empty() });
 
@@ -72,7 +74,7 @@ function setup() {
   });
   map.on('click', 'cities', e => {
     const p = e.features[0].properties;
-    popup.setLngLat(e.lngLat).setHTML(`<b>${esc(p.name)}</b><span>Intensidad ${roman(p.mmi)}</span>`).addTo(map);
+    popup.setLngLat(e.lngLat).setHTML(`<b>${esc(p.name)}</b><span>Intensidad ${num(p.mmi, 1)}</span>`).addTo(map);
   });
   for (const id of ['aftershocks', 'local', 'cities']) {
     map.on('mouseenter', id, () => { map.getCanvas().style.cursor = 'pointer'; });
@@ -130,17 +132,19 @@ function drawShake() {
 
 /** Frames the map for a screen. On phones the panel covers the bottom, so pad for it. */
 export function frame(scene, { animate = true, extra } = {}) {
-  if (!ev || !map?.loaded()) return;
+  if (!ev || !map?.getSource('aftershocks')) return;
   const wide = innerWidth >= 900;
   const mapH = innerHeight * (['casa', 'ciencia'].includes(document.body.dataset.route) ? 0.3 : 0.44);
   const padding = wide ? { top: 90, bottom: 60, left: 520, right: 60 } : { top: 80, bottom: innerHeight - mapH + 10, left: 20, right: 20 };
   let radius = aftershockRadius(ev.mag);
   if (scene === 'cities' && ev.cities?.length) radius = Math.max(radius, ...ev.cities.slice(0, 40).map(c => Math.hypot(c.lat - ev.lat, (c.lon - ev.lon) * Math.cos(ev.lat * Math.PI / 180)) * 111));
+  const p = map.getPadding();
+  if (p.top || p.bottom || p.left || p.right) map.setPadding({ top: 0, bottom: 0, left: 0, right: 0 });
   const pts = circle([ev.lon, ev.lat], radius, 32).concat(extra || []);
   const lons = pts.map(p => p[0]), lats = pts.map(p => p[1]);
   // animate=false is the intro: a slow, cinematic descent from the globe.
   const duration = reduceMotion() ? 0 : animate ? 1400 : 4200;
-  map.fitBounds([[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]], { padding, duration, maxZoom: 9, essential: true });
+  map.fitBounds([[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]], { padding, duration, maxZoom: 9, pitch: 0, bearing: 0, essential: true });
   map.setLayoutProperty('cities', 'visibility', scene === 'cities' ? 'visible' : 'none');
   map.setPaintProperty('aftershocks', 'circle-opacity', scene === 'cities' ? 0.15 : ['get', 'o']);
   map.setLayoutProperty('local', 'visibility', scene === 'cities' ? 'none' : 'visible');
@@ -241,39 +245,154 @@ function shockwave() {
 }
 
 /**
- * You vs the quake: P and S waves travel to your spot in slow motion.
- * Calls onWave('p' | 's', secondsAfterOrigin) as each arrives.
+ * You vs the quake: P and S waves travel to your spot in slow motion, the screen jolts when the
+ * S wave lands, then the camera dives into a 3D city with your building lit in your intensity color.
+ * Calls onWave('p' | 's', secondsAfterOrigin) as each arrives, and onBuilding(heightMeters) if
+ * OpenStreetMap knows the building at your spot.
  */
-export async function showYou(lat, lon, distance, onWave) {
+export async function showYou(lat, lon, distance, { mmi = 5, onWave, onBuilding } = {}) {
   await ready;
   clearYou();
+  const token = youToken;
+  const color = mmiColor(mmi);
   const el = document.createElement('div');
   el.className = 'you';
-  el.innerHTML = '<b></b>';
+  el.style.setProperty('--c', color);
+  el.innerHTML = '<i></i><i></i><b></b>';
   youMarker = new maplibregl.Marker({ element: el }).setLngLat([lon, lat]).addTo(map);
-  map.getSource('link').setData({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [[ev.lon, ev.lat], [lon, lat]] } });
-  frame('you', { extra: circle([lon, lat], 15, 8) });
+  // Already looking at the city (e.g. tapping another building): stay there.
+  const inCity = map.getZoom() >= 14 && km(map.getCenter().lat, map.getCenter().lng, lat, lon) < 4;
+  if (inCity) {
+    lightBuilding(lat, lon, color, onBuilding, token);
+    map.easeTo({ center: [lon, lat], duration: reduceMotion() ? 0 : 900, padding: cityPadding(), essential: true });
+  } else {
+    map.getSource('link').setData({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [[ev.lon, ev.lat], [lon, lat]] } });
+    frame('you', { extra: circle([lon, lat], 15, 8) });
+  }
 
   const pSpeed = 6.5, sSpeed = 3.6; // km/s, typical crustal speeds
   const hypo = Math.hypot(distance, ev.depth || 10);
   const sArrive = hypo / sSpeed, pArrive = hypo / pSpeed;
   const total = Math.max(sArrive * 1.15, 6); // seconds of quake time to show
-  const duration = reduceMotion() ? 1 : Math.min(9000, Math.max(3500, total * 140));
+  const duration = reduceMotion() ? 1 : inCity ? 2600 : Math.min(7000, Math.max(3200, total * 120));
   let pDone = false, sDone = false;
   animateWaves(t => {
     const secs = total * t;
-    if (!pDone && secs >= pArrive) { pDone = true; onWave?.('p', pArrive); }
-    if (!sDone && secs >= sArrive) { sDone = true; onWave?.('s', sArrive); }
+    if (!pDone && secs >= pArrive) { pDone = true; onWave?.('p', pArrive); shake(Math.max(1.5, (mmi - 3) * 0.6), 500); }
+    if (!sDone && secs >= sArrive) { sDone = true; onWave?.('s', sArrive); shake(Math.max(3, (mmi - 2) * 2.2), 1300); }
     return [
       ring(secs * pSpeed, { color: '#7fd4ff', fill: 0.05, width: 1.6, opacity: 0.9 }),
       ring(secs * sSpeed, { color: '#ffb547', fill: 0.1, width: 2.4, opacity: 1 }),
     ];
-  }, duration);
+  }, duration, () => {
+    if (inCity || token !== youToken) return;
+    setTimeout(() => token === youToken && dive(lat, lon, color, onBuilding, token), reduceMotion() ? 0 : 500);
+  });
 }
+
+let youToken = 0, orbitAnim = 0;
 export function clearYou() {
+  youToken++;
   youMarker?.remove(); youMarker = null;
   cancelAnimationFrame(waveAnim); waveAnim = null;
+  cancelAnimationFrame(orbitAnim); orbitAnim = 0;
   if (map?.getSource('link')) { map.getSource('link').setData(empty()); map.getSource('waves').setData(empty()); }
+  map?.getSource('mine')?.setData(empty());
+}
+
+// ---- 3D city ----
+const BUILDINGS = 'https://tiles.openfreemap.org/planet';
+// Keeps your spot centered in the part of the map the panel doesn't cover (frame() clears it again).
+const cityPadding = () => innerWidth >= 900 ? { top: 60, bottom: 40, left: 500, right: 40 }
+  : { top: 70, bottom: innerHeight - innerHeight * 0.44, left: 0, right: 0 };
+
+/** Building heights come from OpenFreeMap, added only the first time someone dives in. */
+function ensureBuildings() {
+  if (map.getSource('ofm')) return;
+  map.addSource('ofm', { type: 'vector', url: BUILDINGS, attribution: '<a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a> © OpenMapTiles' });
+  map.addSource('mine', { type: 'geojson', data: empty() });
+  const height = ['coalesce', ['get', 'render_height'], 6];
+  // Buildings rise out of the ground as the camera comes down.
+  const rise = v => ['interpolate', ['cubic-bezier', 0.2, 0.8, 0.3, 1], ['zoom'], 14.6, 0, 15.8, v];
+  map.addLayer({ id: 'bldg', type: 'fill-extrusion', source: 'ofm', 'source-layer': 'building', minzoom: 14.6, paint: {
+    'fill-extrusion-color': ['interpolate', ['linear'], height, 0, '#1b2436', 30, '#24395c', 90, '#3a5d94', 200, '#5b86c7'],
+    'fill-extrusion-height': rise(height), 'fill-extrusion-base': rise(['coalesce', ['get', 'render_min_height'], 0]),
+    'fill-extrusion-opacity': 0.9, 'fill-extrusion-vertical-gradient': true } }, labels);
+  map.addLayer({ id: 'mine', type: 'fill-extrusion', source: 'mine', paint: {
+    'fill-extrusion-color': ['get', 'color'], 'fill-extrusion-height': ['get', 'h'], 'fill-extrusion-base': ['get', 'b'],
+    'fill-extrusion-opacity': 0.95 } }, labels);
+}
+
+async function dive(lat, lon, color, onBuilding, token) {
+  ensureBuildings();
+  map.setMaxPitch(70);
+  const still = reduceMotion();
+  map.flyTo({ center: [lon, lat], zoom: 16.4, pitch: 60, bearing: -28, padding: cityPadding(),
+    duration: still ? 0 : 3400, curve: 1.6, essential: true });
+  await new Promise(r => map.once('moveend', r));
+  if (token !== youToken) return;
+  lightBuilding(lat, lon, color, onBuilding, token);
+  if (!still) orbit(token);
+}
+
+/** Finds the building under your spot and paints it in your intensity color. */
+async function lightBuilding(lat, lon, color, onBuilding, token) {
+  ensureBuildings();
+  if (!map.areTilesLoaded()) await new Promise(r => map.once('idle', r));
+  if (token !== youToken) return;
+  const b = buildingAt(lat, lon);
+  if (!b) { onBuilding?.(null); return; }
+  const h = +b.properties.render_height || 6;
+  map.getSource('mine').setData({ type: 'Feature', geometry: b.geometry,
+    properties: { h: h + 0.6, b: +b.properties.render_min_height || 0, color } });
+  onBuilding?.(h);
+}
+
+/** The building containing the point, or the closest one within ~25 m (from the loaded tiles). */
+function buildingAt(lat, lon) {
+  let best = null, bestD = 25;
+  for (const f of map.querySourceFeatures('ofm', { sourceLayer: 'building' })) {
+    const polys = f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.type === 'MultiPolygon' ? f.geometry.coordinates : [];
+    for (const poly of polys) {
+      if (inside(poly[0], lon, lat)) return { geometry: { type: 'Polygon', coordinates: poly }, properties: f.properties };
+      const d = Math.min(...poly[0].map(([x, y]) => km(lat, lon, y, x) * 1000));
+      if (d < bestD) { bestD = d; best = { geometry: { type: 'Polygon', coordinates: poly }, properties: f.properties }; }
+    }
+  }
+  return best;
+}
+function inside(ring, x, y) {
+  let ok = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i], [xj, yj] = ring[j];
+    if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) ok = !ok;
+  }
+  return ok;
+}
+
+/** A slow drift around your building until someone touches the map. */
+function orbit(token) {
+  let last = performance.now();
+  const stop = () => { cancelAnimationFrame(orbitAnim); orbitAnim = 0; };
+  for (const e of ['dragstart', 'wheel', 'touchstart', 'mousedown']) map.once(e, stop);
+  const step = now => {
+    if (token !== youToken) return;
+    map.setBearing(map.getBearing() + (now - last) / 1000 * 2.4);
+    last = now;
+    orbitAnim = requestAnimationFrame(step);
+  };
+  orbitAnim = requestAnimationFrame(step);
+}
+
+/** The whole map jolts, harder for stronger shaking. */
+function shake(px, ms) {
+  if (reduceMotion()) return;
+  const n = Math.round(ms / 45);
+  const frames = Array.from({ length: n }, (_, i) => {
+    const k = px * (1 - i / n);
+    return { transform: `translate(${(Math.random() * 2 - 1) * k}px, ${(Math.random() * 2 - 1) * k * 0.6}px)` };
+  });
+  map.getContainer().animate([...frames, { transform: 'none' }], { duration: ms, easing: 'linear' });
 }
 
 export async function showCities(cities) {

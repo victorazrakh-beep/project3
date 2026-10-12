@@ -1,16 +1,18 @@
 // "Tú": your personal intensity, from the USGS shaking grid at your exact spot.
-import { $, $$, esc, num, int, roman, mmiInfo, mmiColor, MMI, ease, reduceMotion, haptic, store, shortPlace } from '../util.js';
+import { $, $$, esc, num, int, mmiInfo, mmiColor, MMI, ease, reduceMotion, haptic, store, shortPlace } from '../util.js';
 import { shakingAt, searchPlaces, loadDYFI, inPanama } from '../data.js';
 import { km } from '../util.js';
 import { showYou, onMapClick, clearYou } from '../map.js';
+import { createTower, towerFacts } from '../tower.js';
 
 const PLACES = [['casa', 'Casa'], ['edificio', 'Edificio'], ['afuera', 'Afuera'], ['vehiculo', 'En un carro']];
 const GROUNDS = [['nose', 'No sé'], ['roca', 'Roca o loma'], ['firme', 'Tierra firme'], ['relleno', 'Relleno o junto al agua']];
 
-let choice, offClick;
+let choice, offClick, tower;
 
 export function render({ ev }) {
-  choice = { place: 'casa', floor: 3, ground: 'nose', ...store.get(`onda-tu-${ev.id}`, {}) };
+  choice = { place: 'casa', floor: 3, floors: 10, ground: 'nose', ...store.get(`onda-tu-${ev.id}`, {}) };
+  choice.floors = Math.max(choice.floors, choice.floor);
   return `
   <section class="hero reveal">
     <p class="kicker">Tu intensidad</p>
@@ -33,16 +35,20 @@ export function render({ ev }) {
     </div>
     <p class="muted small">También puedes tocar el mapa. Tu ubicación GPS no sale de este teléfono; las búsquedas usan OpenStreetMap.</p>
     <p class="picked" id="picked" hidden></p>
+    <button class="osm-hint" id="osm-hint" hidden></button>
   </section>
 
   <section class="card reveal">
     <h2><span class="step">2</span> ¿En qué lugar?</h2>
     <div class="seg" data-key="place">${PLACES.map(([v, l]) => `<button data-v="${v}" aria-pressed="${choice.place === v}">${l}</button>`).join('')}</div>
-    <div class="floor" id="floor" ${choice.place === 'edificio' ? '' : 'hidden'}>
-      <span>Piso</span>
-      <button class="round" data-floor="-1" aria-label="Piso más bajo">−</button>
-      <input class="floor-n" id="floor-n" type="number" inputmode="numeric" min="1" max="80" value="${choice.floor}" aria-label="Número de piso">
-      <button class="round" data-floor="1" aria-label="Piso más alto">+</button>
+    <div class="tower-box" id="floor" ${choice.place === 'edificio' ? '' : 'hidden'}>
+      <canvas class="tower" id="tower" aria-label="Edificio: toca o arrastra para elegir tu piso"></canvas>
+      <p class="tower-tip">Toca o arrastra sobre el edificio para elegir tu piso</p>
+      <div class="tower-controls">
+        ${stepper('floors', 'Pisos del edificio', choice.floors)}
+        ${stepper('floor', 'Tu piso', choice.floor)}
+      </div>
+      <p class="tower-facts" id="tower-facts"></p>
     </div>
     <h2 class="mt"><span class="step">3</span> ¿Sobre qué suelo? <small class="muted">opcional</small></h2>
     <div class="seg" data-key="ground">${GROUNDS.map(([v, l]) => `<button data-v="${v}" aria-pressed="${choice.ground === v}">${l}</button>`).join('')}</div>
@@ -50,7 +56,7 @@ export function render({ ev }) {
 
   <section class="card result" id="result" hidden>
     <div class="gauge-wrap">${gaugeSVG()}
-      <div class="gauge-center"><span class="gauge-n" id="g-n">I</span><span class="gauge-r" id="g-r"></span></div>
+      <div class="gauge-center"><span class="gauge-n" id="g-n">1.0</span><span class="gauge-r" id="g-r"></span></div>
     </div>
     <h2 class="result-name" id="g-name"></h2>
     <p class="lead center" id="g-text"></p>
@@ -63,6 +69,15 @@ export function render({ ev }) {
     <details class="how"><summary>Cómo lo calculamos</summary><div id="g-how"></div></details>
     <button class="btn wide" id="share">Compartir mi resultado</button>
   </section>`;
+}
+
+function stepper(key, label, value) {
+  return `<div class="stepper" data-key="${key}">
+    <span>${label}</span>
+    <div><button class="round" data-d="-1" aria-label="Menos">−</button>
+    <input type="number" inputmode="numeric" min="1" max="80" value="${value}" aria-label="${label}">
+    <button class="round" data-d="1" aria-label="Más">+</button></div>
+  </div>`;
 }
 
 // 240° gauge split into the ten intensity colors.
@@ -101,6 +116,8 @@ export function mount(el, ctx) {
   let spot = store.get(`onda-tu-${ev.id}`, {}).spot || null;
   let shown = 0;
   const save = () => store.set(`onda-tu-${ev.id}`, { ...choice, spot });
+  // Once you've picked a spot, cards stop at the map's edge on phones so the 3D city stays in view.
+  const clearMap = () => document.body.classList.toggle('map-clear', !!spot && document.activeElement !== $('#city', el));
 
   function compute(replayWaves) {
     if (!spot) return;
@@ -114,30 +131,33 @@ export function mount(el, ctx) {
     $('#g-name', el).textContent = info.name;
     $('#g-name', el).style.color = mmiColor(total);
     $('#g-text', el).textContent = info.text;
-    $('#g-note', el).innerHTML = `No es la magnitud. La <b>magnitud ${num(ev.mag, 1)}</b> mide la energía de todo el sismo y es una sola. La <b>intensidad</b> mide cuánto se sacudió cada lugar, de I a X, y por eso cambia de un punto a otro.`;
+    $('#g-note', el).innerHTML = `No es la magnitud. La <b>magnitud ${num(ev.mag, 1)}</b> mide la energía de todo el sismo y es una sola. La <b>intensidad</b> mide cuánto se sacudió cada lugar, de 1 a 10, y por eso cambia de un punto a otro.`;
     $('#g-how', el).innerHTML = `
       <div class="how-row"><span>${source === 'shakemap' ? 'Sacudida del suelo en tu punto (ShakeMap del USGS)' : 'Sacudida estimada por distancia y magnitud'}</span><b>${num(mmi, 1)}</b></div>
       ${list.map(([t, v]) => `<div class="how-row"><span>${esc(t)}</span><b>${v > 0 ? '+' : '−'}${num(Math.abs(v), 1)}</b></div>`).join('')}
-      <div class="how-row total"><span>Tu intensidad</span><b>${num(total, 1)} → ${roman(total)}</b></div>
-      <p class="muted small">Estás a ${int(distance)} km del epicentro. La escala de Mercalli va de I (nadie lo siente) a X o más (destrucción); los decimales son el valor exacto antes de redondear. Los ajustes son aproximados.</p>`;
+      <div class="how-row total"><span>Tu intensidad</span><b>${num(total, 1)}</b></div>
+      <p class="muted small">Estás a ${int(distance)} km del epicentro. La escala va de 1 (nadie lo siente) a 10 (destrucción). Los ajustes son aproximados.</p>`;
     $('#share', el).onclick = () => share(total, spot.name);
     if (replayWaves) {
       $('#w-p', el).textContent = 'viajando…'; $('#w-s', el).textContent = 'viajando…';
       $$('.wave', el).forEach(w => w.classList.remove('hit'));
-      showYou(spot.lat, spot.lon, distance, (kind, secs) => {
+      $('#osm-hint', el).hidden = true;
+      showYou(spot.lat, spot.lon, distance, { mmi: total, onBuilding: building, onWave: (kind, secs) => {
         const w = $(`.wave.${kind}`, el);
+        if (kind === 's') tower?.kick(Math.min(1.4, Math.max(0.4, (total - 3) / 4)));
         w.classList.add('hit');
         $(`#w-${kind}`, el).textContent = kind === 'p'
           ? `llegó a los ${int(secs)} s: un golpe seco o un zumbido`
           : `llegó a los ${int(secs)} s: la que más sacude`;
         haptic(kind === 's' ? [40, 30, 60] : 15);
-      });
+      } });
       // On phones, park the result just under the map so you can watch the waves arrive.
       const behavior = reduceMotion() ? 'auto' : 'smooth';
       setTimeout(() => innerWidth >= 900
         ? $('#result', el).scrollIntoView({ behavior, block: 'start' })
-        : el.scrollTo({ top: $('#result', el).offsetTop - innerHeight * 0.44 + 8, behavior }), 250);
+        : el.scrollTo({ top: $('#result', el).offsetTop - (document.body.classList.contains('map-clear') ? 12 : innerHeight * 0.44 - 4), behavior }), 250);
     }
+    tower?.set({ mmi: total });
     save();
   }
 
@@ -150,7 +170,7 @@ export function mount(el, ctx) {
       const k = t < 1 ? ease(t) + Math.sin(t * Math.PI) * 0.06 : 1;
       const v = from + (to - from) * k;
       needle.style.transform = `rotate(${angle(v)}deg)`;
-      n.textContent = roman(v);
+      n.textContent = num(Math.max(1, Math.min(10, v)), 1);
       n.style.color = mmiColor(v);
       if (t < 1) requestAnimationFrame(step);
     };
@@ -172,13 +192,14 @@ export function mount(el, ctx) {
     if (!best || dist > 12) { box.hidden = true; return; }
     box.hidden = false;
     box.innerHTML = `<span class="dot" style="--c:${mmiColor(best.cdi)}"></span><span>
-      <b>${best.responses === 1 ? 'Una persona' : `${int(best.responses)} personas`} en tu zona ${best.responses === 1 ? 'reportó' : 'reportaron'} intensidad ${roman(best.cdi)}</b>
+      <b>${best.responses === 1 ? 'Una persona' : `${int(best.responses)} personas`} en tu zona ${best.responses === 1 ? 'reportó' : 'reportaron'} intensidad ${num(best.cdi, 1)}</b>
       <small>Respuestas a "¿Lo sentiste?" del USGS, en cuadros de 10 km.</small></span>`;
   }
 
   function pick(lat, lon, name) {
     reports(lat, lon);
     spot = { lat, lon, name };
+    clearMap();
     const p = $('#picked', el);
     p.hidden = false;
     p.innerHTML = `<span class="pin"></span> ${esc(name || `${num(lat, 3)}, ${num(lon, 3)}`)}`;
@@ -259,11 +280,12 @@ export function mount(el, ctx) {
     } else if (e.key === 'Escape') { suggest.hidden = true; }
   });
   input.addEventListener('focus', () => {
+    document.body.classList.remove('map-clear');
     if (results.length) show();
     // On phones, lift the search box toward the top so the suggestions clear the keyboard and tab bar.
     if (innerWidth < 900) el.scrollTo({ top: input.closest('.card').offsetTop - 70, behavior: reduceMotion() ? 'auto' : 'smooth' });
   });
-  input.addEventListener('blur', () => setTimeout(() => { suggest.hidden = true; }, 180));
+  input.addEventListener('blur', () => setTimeout(() => { suggest.hidden = true; clearMap(); }, 180));
   suggest.addEventListener('pointerdown', e => e.preventDefault()); // keep focus so the tap lands
   suggest.addEventListener('click', e => {
     const b = e.target.closest('[data-i]');
@@ -281,21 +303,65 @@ export function mount(el, ctx) {
       compute(false);
     });
   }
-  $('#floor', el).addEventListener('click', e => {
-    const b = e.target.closest('[data-floor]');
-    if (!b) return;
-    choice.floor = Math.max(1, Math.min(80, choice.floor + +b.dataset.floor));
-    $('#floor-n', el).value = choice.floor;
-    compute(false);
-  });
-  const floorInput = $('#floor-n', el);
-  floorInput.addEventListener('focus', () => floorInput.select());
-  floorInput.addEventListener('input', () => {
-    const n = parseInt(floorInput.value, 10);
-    if (n >= 1) { choice.floor = Math.min(80, n); compute(false); }
-  });
-  floorInput.addEventListener('change', () => { floorInput.value = choice.floor; });
-  floorInput.addEventListener('keydown', e => { if (e.key === 'Enter') floorInput.blur(); });
+  // ---- Building: tap the drawing or type the numbers ----
+  tower = createTower($('#tower', el), { onPick: f => { if (f !== choice.floor) { setFloors({ floor: f }); haptic(6); } } });
+  function setFloors(next, from) {
+    Object.assign(choice, next);
+    choice.floors = Math.max(1, Math.min(80, choice.floors));
+    choice.floor = Math.max(1, Math.min(80, choice.floor));
+    // Typing a floor higher than the building makes the building taller, never the other way round.
+    if (choice.floor > choice.floors) { if ('floors' in next) choice.floor = choice.floors; else choice.floors = choice.floor; }
+    for (const st of $$('.stepper', el)) {
+      const input = $('input', st);
+      if (input !== from) input.value = choice[st.dataset.key];
+    }
+    const { height, period, ratio } = towerFacts(choice.floors, choice.floor);
+    $('#tower-facts', el).innerHTML = `<span><b>~${int(height)} m</b> de alto</span><span>se mece cada <b>${num(period, 1)} s</b></span>
+      <span>tu piso se acelera hasta <b>${num(ratio, 1)}×</b> lo que la calle</span>`;
+    tower.set({ floors: choice.floors, floor: choice.floor });
+    if (spot) compute(false); else save();
+  }
+  for (const st of $$('.stepper', el)) {
+    const key = st.dataset.key, input = $('input', st);
+    let hold;
+    const bump = d => setFloors({ [key]: choice[key] + d });
+    // Hold a button to keep counting.
+    st.addEventListener('pointerdown', e => {
+      const b = e.target.closest('[data-d]');
+      if (!b) return;
+      e.preventDefault();
+      bump(+b.dataset.d);
+      let wait = 380;
+      const again = () => { bump(+b.dataset.d); wait = Math.max(50, wait * 0.8); hold = setTimeout(again, wait); };
+      hold = setTimeout(again, wait);
+    });
+    for (const type of ['pointerup', 'pointerleave', 'pointercancel']) st.addEventListener(type, () => clearTimeout(hold));
+    st.addEventListener('keydown', e => { const b = e.target.closest('[data-d]'); if (b && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); bump(+b.dataset.d); } });
+    input.addEventListener('focus', () => input.select());
+    input.addEventListener('input', () => { const n = parseInt(input.value, 10); if (n >= 1) setFloors({ [key]: Math.min(80, n) }, input); });
+    input.addEventListener('change', () => { input.value = choice[key]; });
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') input.blur(); });
+  }
+  setFloors({});
+
+  // OpenStreetMap often knows how tall the building at your spot is.
+  function building(heightM) {
+    const hint = $('#osm-hint', el);
+    const floors = heightM ? Math.round(heightM / 3) : 0;
+    if (floors < 3 || (choice.place === 'edificio' && choice.floors === floors)) { hint.hidden = true; return; }
+    hint.hidden = false;
+    hint.innerHTML = `<span class="osm-bldg" style="--n:${Math.min(floors, 30)}"></span>
+      <span><b>Tu edificio mide ~${int(heightM)} m</b><small>Unos ${floors} pisos, según OpenStreetMap. Toca para usarlo.</small></span>`;
+    hint.onclick = () => {
+      hint.hidden = true;
+      choice.place = 'edificio';
+      $$('[data-key="place"] button', el).forEach(x => x.setAttribute('aria-pressed', x.dataset.v === 'edificio'));
+      $('#floor', el).hidden = false;
+      setFloors({ floors, floor: Math.min(choice.floor, floors) });
+      haptic(12);
+      $('#floor', el).scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth', block: 'center' });
+    };
+  }
 
   offClick = onMapClick(e => {
     if (e.defaultPrevented) return;
@@ -306,11 +372,11 @@ export function mount(el, ctx) {
   requestAnimationFrame(() => $$('.reveal', el).forEach(n => n.classList.add('in')));
 
   function share(total, name) {
-    const text = `Según Onda, el sismo M${num(ev.mag, 1)} se sintió con intensidad ${roman(total)} (${mmiInfo(total).name.toLowerCase()})${name ? ` en ${name}` : ' donde yo estaba'}.`;
+    const text = `Según Onda, el sismo M${num(ev.mag, 1)} se sintió con intensidad ${num(total, 1)} (${mmiInfo(total).name.toLowerCase()})${name ? ` en ${name}` : ' donde yo estaba'}.`;
     const url = location.href.split('#')[0] + '#/tu';
     if (navigator.share) navigator.share({ title: 'Mi intensidad', text, url }).catch(() => {});
     else navigator.clipboard?.writeText(`${text} ${url}`).then(() => { $('#share', el).textContent = 'Copiado'; });
   }
 }
 
-export function unmount() { offClick?.(); offClick = null; clearYou(); }
+export function unmount() { document.body.classList.remove('map-clear'); offClick?.(); offClick = null; tower?.destroy(); tower = null; clearYou(); }
