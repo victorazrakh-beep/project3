@@ -318,7 +318,7 @@ export function clearYou() {
   youToken++;
   youMarker?.remove(); youMarker = null;
   cancelAnimationFrame(waveAnim); waveAnim = null;
-  cancelAnimationFrame(orbitAnim); orbitAnim = 0;
+  cancelAnimationFrame(orbitAnim); orbitAnim = 0; orbitStep = null;
   if (map?.getSource('link')) { map.getSource('link').setData(empty()); map.getSource('waves').setData(empty()); }
   map?.getSource('mine')?.setData(empty());
 }
@@ -394,17 +394,25 @@ function inside(ring, x, y) {
 }
 
 /** A slow drift around your building until someone touches the map. */
+let orbitStep = null; // the running drift, so scrolling the cards can pause and resume it
 function orbit(token) {
   let last = performance.now();
-  const stop = () => { cancelAnimationFrame(orbitAnim); orbitAnim = 0; };
+  const stop = () => { cancelAnimationFrame(orbitAnim); orbitAnim = 0; orbitStep = null; };
   for (const e of ['dragstart', 'wheel', 'touchstart', 'mousedown']) map.once(e, stop);
   const step = now => {
-    if (token !== youToken) return;
+    if (token !== youToken) { orbitStep = null; return; }
     map.setBearing(map.getBearing() + (now - last) / 1000 * 2.4);
     last = now;
     orbitAnim = requestAnimationFrame(step);
   };
-  orbitAnim = requestAnimationFrame(step);
+  orbitStep = () => { last = performance.now(); orbitAnim = requestAnimationFrame(step); };
+  orbitStep();
+}
+
+/** Pauses the drift while the cards scroll (the 3D city is heavy on phones), and lets it go on afterwards. */
+export function holdOrbit(hold) {
+  if (hold) { cancelAnimationFrame(orbitAnim); orbitAnim = 0; }
+  else if (orbitStep && !orbitAnim) orbitStep();
 }
 
 /** The whole map jolts, harder for stronger shaking. */

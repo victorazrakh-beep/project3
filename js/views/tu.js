@@ -2,7 +2,7 @@
 import { $, $$, esc, num, int, mmiInfo, mmiColor, MMI, ease, reduceMotion, haptic, store, shortPlace } from '../util.js';
 import { shakingAt, searchPlaces, loadDYFI, inPanama, similarity } from '../data.js';
 import { km } from '../util.js';
-import { showYou, onMapClick, clearYou, setSwipeScroll } from '../map.js';
+import { showYou, onMapClick, clearYou, setSwipeScroll, holdOrbit } from '../map.js';
 import { createTower, towerFacts } from '../tower.js';
 import { openShare } from '../share.js';
 
@@ -132,13 +132,18 @@ export function mount(el, ctx) {
   // How tall the soft edge between the map and the cards is (CSS --fade).
   const fade = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--fade')) || 96;
   // The map reacts to the cards' scroll (CSS reads --sp, 0 → 1): it drifts and dims as the cards rise.
-  let spRaf = 0, rest = 0; // rest: where the result card is parked after a pick
+  let spRaf = 0, rest = 0, orbitTimer = 0; // rest: where the result card is parked after a pick
+  const mapBox = document.getElementById('map'), mapShade = document.querySelector('.map-fade');
+  // Set on the two elements that use it, not on <body>, so every scroll frame doesn't restyle the whole page.
+  const setSp = v => { mapBox.style.setProperty('--sp', v); mapShade.style.setProperty('--sp', v); };
   const onSheetScroll = () => {
+    // The 3D city is heavy on phones: let the map's slow drift rest while the cards move.
+    holdOrbit(true); clearTimeout(orbitTimer); orbitTimer = setTimeout(() => holdOrbit(false), 900);
     if (spRaf) return;
     spRaf = requestAnimationFrame(() => {
       spRaf = 0;
       const on = document.body.classList.contains('map-clear');
-      document.body.style.setProperty('--sp', on ? Math.min(1, Math.max(0, el.scrollTop - rest) / 420).toFixed(3) : '0');
+      setSp(on ? Math.min(1, Math.max(0, el.scrollTop - rest) / 420).toFixed(3) : '0');
     });
   };
   el.addEventListener('scroll', onSheetScroll, { passive: true });
@@ -178,7 +183,8 @@ export function mount(el, ctx) {
   mapEl.addEventListener('touchend', swipeEnd, { passive: true });
   mapEl.addEventListener('touchcancel', swipeEnd, { passive: true });
   sheetOff = () => {
-    el.removeEventListener('scroll', onSheetScroll); cancelAnimationFrame(spRaf); document.body.style.removeProperty('--sp');
+    el.removeEventListener('scroll', onSheetScroll); cancelAnimationFrame(spRaf); clearTimeout(orbitTimer); holdOrbit(false);
+    mapBox.style.removeProperty('--sp'); mapShade.style.removeProperty('--sp');
     cancelAnimationFrame(fling);
     for (const [t, f] of [['touchstart', swipeStart], ['touchmove', swipeMove], ['touchend', swipeEnd], ['touchcancel', swipeEnd]]) mapEl.removeEventListener(t, f);
     setSwipeScroll(false);
