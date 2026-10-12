@@ -2,7 +2,7 @@
 import { $, $$, esc, num, int, mmiInfo, mmiColor, MMI, ease, reduceMotion, haptic, store, shortPlace } from '../util.js';
 import { shakingAt, searchPlaces, loadDYFI, inPanama, similarity } from '../data.js';
 import { km } from '../util.js';
-import { showYou, onMapClick, clearYou, setSwipeScroll, holdOrbit } from '../map.js';
+import { showYou, onMapClick, clearYou, setSwipeScroll, holdOrbit, frame } from '../map.js';
 import { createTower, towerFacts, MAX_FLOORS } from '../tower.js';
 import { openShare } from '../share.js';
 
@@ -78,6 +78,7 @@ export function render({ ev }) {
     <details class="how"><summary>Cómo lo calculamos</summary><div id="g-how"></div></details>
     <button class="btn primary wide share-cta" id="share"><svg viewBox="0 0 24 24" width="20" height="20"><path d="M12 15V4m0 0L7.5 8.5M12 4l4.5 4.5M5 13v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>Compartir mi resultado</button>
     <p class="share-hint">WhatsApp · Historia de Instagram · enlace</p>
+    <button class="btn ghost wide" id="again">Calcular otro</button>
   </section>`;
 }
 
@@ -211,6 +212,7 @@ export function mount(el, ctx) {
   async function reports(lat, lon) {
     const box = $('#dyfi', el);
     const cells = await loadDYFI(ev).catch(() => []);
+    if (!spot) return; // the person already moved on to another spot
     let best = null, dist = Infinity;
     for (const c of cells) { const d = km(lat, lon, c.lat, c.lon); if (d < dist) { dist = d; best = c; } }
     if (!best || dist > 12) { box.hidden = true; return; }
@@ -386,6 +388,22 @@ export function mount(el, ctx) {
       $('#floor', el).scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth', block: 'center' });
     };
   }
+
+  // "Calcular otro": forget this spot, pull the map back out and return to step 1 for a new one.
+  $('#again', el).addEventListener('click', () => {
+    spot = null; shown = 0;
+    save();
+    $('#result', el).hidden = true;
+    $('#picked', el).hidden = true;
+    $('#osm-hint', el).hidden = true;
+    $('#dyfi', el).hidden = true;
+    input.value = ''; results = []; active = -1; suggest.hidden = true;
+    clearYou();
+    frame('event');
+    haptic(8);
+    const top = 0, behavior = reduceMotion() ? 'auto' : 'smooth';
+    innerWidth >= 900 ? el.scrollTo({ top, behavior }) : scrollTo({ top, behavior });
+  });
 
   offClick = onMapClick(e => {
     if (e.defaultPrevented) return;
