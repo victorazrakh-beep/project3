@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Onda · Sismos en vivo</title>
+  <meta name="description" content="Onda: cuánto sentiste el sismo, réplicas en vivo, intensidad por ciudad y qué revisar en tu casa. Datos del USGS.">
+  <meta name="theme-color" content="#07090f">
+  <meta property="og:title" content="Onda · Sismos en vivo">
+  <meta property="og:description" content="Cuánto sentiste el sismo, réplicas en vivo y qué revisar en tu casa.">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css">
+  <link rel="stylesheet" href="css/app.css">
+  <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
+</head>
+<body data-route="ahora">
+  <div id="map" aria-label="Mapa del sismo y sus réplicas"></div>
+  <div class="map-fade" aria-hidden="true"></div>
+
+  <header class="topbar">
+    <a class="brand" href="#/" aria-label="Onda, inicio">
+      <svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true"><path d="M3 17h5l3-9 4 17 4-13 3 5h7" fill="none" stroke="url(#g)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><defs><linearGradient id="g" x1="0" x2="1"><stop offset="0" stop-color="#7fd4ff"/><stop offset=".55" stop-color="#ffb547"/><stop offset="1" stop-color="#ff4d3d"/></linearGradient></defs></svg>
+      <span>Onda</span>
+    </a>
+    <button class="event-chip" id="event-chip" aria-label="Cambiar de sismo"><span class="skeleton"></span></button>
+  </header>
+
+  <main class="panel" id="view" tabindex="-1">
+    <div class="loading"><span class="loader"></span><p>Conectando con los sismógrafos…</p></div>
+  </main>
+
+  <nav class="tabs" aria-label="Secciones">
+    <a href="#/" data-route=""><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="7.5" class="o"/><circle cx="12" cy="12" r="11" class="o2"/></svg><span>Ahora</span></a>
+    <a href="#/tu" data-route="tu"><svg viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21z" class="o"/><circle cx="12" cy="9.5" r="2.6"/></svg><span>Tú</span></a>
+    <a href="#/ciudades" data-route="ciudades"><svg viewBox="0 0 24 24"><path d="M3 21V10l5-3v14M8 21V4l7 3v14M15 21v-9l6 2v7M2 21h20" class="o"/></svg><span>Ciudades</span></a>
+    <a href="#/casa" data-route="casa"><svg viewBox="0 0 24 24"><path d="M3 11l9-7 9 7v10H3z" class="o"/><path d="M10 21v-6h4v6" class="o"/></svg><span>Casa</span></a>
+    <a href="#/ciencia" data-route="ciencia"><svg viewBox="0 0 24 24"><path d="M2 12h3l2-6 3 12 3-9 2 5 2-2h5" class="o"/></svg><span>Ciencia</span></a>
+  </nav>
+
+  <div class="sheet-backdrop" id="picker" hidden>
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="picker-title">
+      <div class="sheet-head"><h2 id="picker-title">Otros sismos recientes</h2><button class="link" data-close>Cerrar</button></div>
+      <div class="sheet-body" id="picker-list"></div>
+    </div>
+  </div>
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
