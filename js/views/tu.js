@@ -3,7 +3,7 @@ import { $, $$, esc, num, int, mmiInfo, mmiColor, MMI, ease, reduceMotion, hapti
 import { shakingAt, searchPlaces, loadDYFI, inPanama, similarity } from '../data.js';
 import { km } from '../util.js';
 import { showYou, onMapClick, clearYou, setSwipeScroll, holdOrbit } from '../map.js';
-import { createTower, towerFacts } from '../tower.js';
+import { createTower, towerFacts, MAX_FLOORS } from '../tower.js';
 import { openShare } from '../share.js';
 
 const PLACES = [['casa', 'Casa'], ['edificio', 'Edificio'], ['afuera', 'Afuera'], ['vehiculo', 'En un carro']];
@@ -18,8 +18,8 @@ export function render({ ev }) {
   if (shared.has('lat') && Number.isFinite(lat) && Number.isFinite(lon)) {
     sharedSpot = { lat, lon, name: shared.get('n') || null };
     Object.assign(choice, { place: shared.get('p') || 'casa', ground: shared.get('g') || 'nose' });
-    if (shared.has('f')) choice.floor = Math.max(1, Math.min(80, +shared.get('f') || 1));
-    if (shared.has('F')) choice.floors = Math.min(80, +shared.get('F') || choice.floor);
+    if (shared.has('f')) choice.floor = Math.max(1, Math.min(MAX_FLOORS, +shared.get('f') || 1));
+    if (shared.has('F')) choice.floors = Math.min(MAX_FLOORS, +shared.get('F') || choice.floor);
   }
   choice.floors = Math.max(choice.floors, choice.floor);
   return `
@@ -85,7 +85,7 @@ function stepper(key, label, value) {
   return `<div class="stepper" data-key="${key}">
     <span>${label}</span>
     <div><button class="round" data-d="-1" aria-label="Menos">−</button>
-    <input type="number" inputmode="numeric" min="1" max="80" value="${value}" aria-label="${label}">
+    <input type="number" inputmode="numeric" min="1" value="${value}" aria-label="${label}">
     <button class="round" data-d="1" aria-label="Más">+</button></div>
   </div>`;
 }
@@ -330,8 +330,8 @@ export function mount(el, ctx) {
   tower = createTower($('#tower', el), { onPick: f => { if (f !== choice.floor) { setFloors({ floor: f }); haptic(6); } } });
   function setFloors(next, from) {
     Object.assign(choice, next);
-    choice.floors = Math.max(1, Math.min(80, choice.floors));
-    choice.floor = Math.max(1, Math.min(80, choice.floor));
+    choice.floors = Math.max(1, Math.min(MAX_FLOORS, choice.floors));
+    choice.floor = Math.max(1, Math.min(MAX_FLOORS, choice.floor));
     // Typing a floor higher than the building makes the building taller, never the other way round.
     if (choice.floor > choice.floors) { if ('floors' in next) choice.floor = choice.floors; else choice.floors = choice.floor; }
     for (const st of $$('.stepper', el)) {
@@ -354,14 +354,15 @@ export function mount(el, ctx) {
       if (!b) return;
       e.preventDefault();
       bump(+b.dataset.d);
-      let wait = 380;
-      const again = () => { bump(+b.dataset.d); wait = Math.max(50, wait * 0.8); hold = setTimeout(again, wait); };
+      let wait = 380, mult = 1;
+      // Holding long enough speeds up the count, so very tall buildings are reachable without typing.
+      const again = () => { bump(+b.dataset.d * Math.floor(mult)); if (wait <= 50) mult = Math.min(1e6, mult * 1.08); wait = Math.max(50, wait * 0.8); hold = setTimeout(again, wait); };
       hold = setTimeout(again, wait);
     });
     for (const type of ['pointerup', 'pointerleave', 'pointercancel']) st.addEventListener(type, () => clearTimeout(hold));
     st.addEventListener('keydown', e => { const b = e.target.closest('[data-d]'); if (b && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); bump(+b.dataset.d); } });
     input.addEventListener('focus', () => input.select());
-    input.addEventListener('input', () => { const n = parseInt(input.value, 10); if (n >= 1) setFloors({ [key]: Math.min(80, n) }, input); });
+    input.addEventListener('input', () => { const n = parseInt(input.value, 10); if (n >= 1) setFloors({ [key]: Math.min(MAX_FLOORS, n) }, input); });
     input.addEventListener('change', () => { input.value = choice[key]; });
     input.addEventListener('keydown', e => { if (e.key === 'Enter') input.blur(); });
   }

@@ -3,6 +3,9 @@ import { reduceMotion, mmiColor } from './util.js';
 
 const STORY_M = 3;            // metres per floor
 const period = n => 0.1 * n;  // rule of thumb: about 0.1 s per floor
+/** No practical ceiling on height: the drawing groups floors once there are too many to show one by one. */
+export const MAX_FLOORS = 1e9;
+const MAX_BLOCKS = 120;       // most floor blocks drawn per frame, however tall the building
 
 /**
  * Draws an isometric tower on a canvas.
@@ -31,7 +34,7 @@ export function createTower(canvas, { onPick } = {}) {
   // Geometry, recomputed each frame from the (animated) floor count.
   function layout(n) {
     const base = h - 34;
-    const fh = Math.max(3.2, Math.min(24, (h - 78) / Math.max(n, 4)));
+    const fh = Math.min(24, (h - 78) / Math.max(n, 4)); // shrinks so any height fits the canvas
     const fw = n <= 2 ? 104 : n <= 6 ? 88 : 70;
     const depth = fw * 0.55;
     return { base, fh, fw, dx: depth * 0.62, dy: depth * 0.36, cx: w * 0.42 - fw / 2 };
@@ -72,15 +75,18 @@ export function createTower(canvas, { onPick } = {}) {
       }
     }
 
-    for (let i = 0; i < whole; i++) {
-      // The newest floor drops into place as the count grows.
-      const grow = Math.min(1, n - i);
+    // Tall buildings are drawn in blocks of several floors, so the cost stays flat at any height.
+    const g = Math.max(1, Math.ceil(whole / MAX_BLOCKS)), blocks = Math.ceil(whole / g);
+    for (let i = 0; i < blocks; i++) {
+      const start = i * g, cnt = Math.min(g, whole - start), bh = cnt * L.fh;
+      // The newest block drops into place as the count grows.
+      const grow = Math.min(1, Math.max(0, (n - start) / cnt));
       const drop = (1 - grow) * -28;
-      const r0 = i * L.fh / total, r1 = (i + 1) * L.fh / total;
+      const r0 = start * L.fh / total, r1 = (start + cnt) * L.fh / total;
       const s0 = sway(r0, time), s1 = sway(r1, time);
-      const y0 = L.base - i * L.fh + drop, y1 = y0 - L.fh;
+      const y0 = L.base - start * L.fh + drop, y1 = y0 - bh;
       const x0 = L.cx + s0, x1 = L.cx + s1;
-      const mine = Math.round(anim.floor) === i + 1;
+      const mine = Math.round(anim.floor) > start && Math.round(anim.floor) <= start + cnt;
       ctx.globalAlpha = grow;
 
       // Side face.
@@ -101,17 +107,17 @@ export function createTower(canvas, { onPick } = {}) {
       ctx.stroke();
 
       // Windows, lit in a fixed pseudo-random pattern.
-      if (L.fh >= 8 && !mine) {
+      if (bh >= 8 && !mine) {
         const cols = L.fw > 80 ? 4 : 3;
         for (let c = 0; c < cols; c++) {
           if (((i * 7 + c * 13) % 5) > 2) continue;
-          const u = (c + 0.5) / cols, wx = x0 + (x1 - x0) * 0.5 + u * L.fw - 3, wy = y0 - L.fh * 0.68;
+          const u = (c + 0.5) / cols, wx = x0 + (x1 - x0) * 0.5 + u * L.fw - 3, wy = y0 - bh * 0.68;
           ctx.fillStyle = (i * 3 + c) % 4 === 0 ? 'rgba(255,214,140,.65)' : 'rgba(255,214,140,.25)';
-          ctx.fillRect(wx, wy, 6, Math.max(2, L.fh * 0.38));
+          ctx.fillRect(wx, wy, 6, Math.max(2, bh * 0.38));
         }
       }
       // Roof.
-      if (i === whole - 1) {
+      if (i === blocks - 1) {
         quad(x1, y1, x1 + L.fw, y1, x1 + L.fw + L.dx, y1 - L.dy, x1 + L.dx, y1 - L.dy);
         ctx.fillStyle = mine ? hexA(color, 0.7) : 'rgba(127,212,255,.16)';
         ctx.fill();
@@ -194,7 +200,7 @@ export function createTower(canvas, { onPick } = {}) {
   return {
     set(next) {
       Object.assign(state, next);
-      state.floors = Math.max(1, Math.min(80, Math.round(state.floors)));
+      state.floors = Math.max(1, Math.min(MAX_FLOORS, Math.round(state.floors)));
       state.floor = Math.max(1, Math.min(state.floors, Math.round(state.floor)));
       dirty = true;
       loop();
