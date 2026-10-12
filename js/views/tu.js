@@ -2,7 +2,7 @@
 import { $, $$, esc, num, int, mmiInfo, mmiColor, MMI, ease, reduceMotion, haptic, store, shortPlace } from '../util.js';
 import { shakingAt, searchPlaces, loadDYFI, inPanama, similarity } from '../data.js';
 import { km } from '../util.js';
-import { showYou, onMapClick, clearYou } from '../map.js';
+import { showYou, onMapClick, clearYou, setSwipeScroll } from '../map.js';
 import { createTower, towerFacts } from '../tower.js';
 import { openShare } from '../share.js';
 
@@ -142,7 +142,47 @@ export function mount(el, ctx) {
     });
   };
   el.addEventListener('scroll', onSheetScroll, { passive: true });
-  sheetOff = () => { el.removeEventListener('scroll', onSheetScroll); cancelAnimationFrame(spRaf); document.body.style.removeProperty('--sp'); };
+
+  // Phones: a one-finger swipe over the map scrolls the cards instead of dragging the map
+  // (taps still pick a spot and pinch still zooms). With the cards parked in their own box below
+  // the map, that box isn't under the finger, so the swipe is handed to it here, with a little momentum.
+  const mapEl = document.getElementById('map');
+  const phone = () => innerWidth < 900;
+  if (phone()) setSwipeScroll(true);
+  let swipeY = null, lastY = 0, lastT = 0, vel = 0, fling = 0, moved = false;
+  const swipeStart = e => {
+    cancelAnimationFrame(fling);
+    swipeY = null;
+    if (!phone() || !document.body.classList.contains('map-clear') || e.touches.length !== 1) return;
+    swipeY = lastY = e.touches[0].clientY; lastT = e.timeStamp; vel = 0; moved = false;
+  };
+  const swipeMove = e => {
+    if (swipeY === null) return;
+    if (e.touches.length !== 1) { swipeY = null; return; }
+    const y = e.touches[0].clientY;
+    if (!moved && Math.abs(y - swipeY) < 6) return; // a tap, not a swipe
+    moved = true;
+    const dy = lastY - y, dt = Math.max(1, e.timeStamp - lastT);
+    el.scrollTop += dy;
+    vel = vel * 0.7 + (dy / dt) * 0.3; lastY = y; lastT = e.timeStamp;
+  };
+  const swipeEnd = () => {
+    if (swipeY === null || !moved) { swipeY = null; return; }
+    swipeY = null;
+    let v = vel * 16;
+    const glide = () => { if (Math.abs(v) < 0.4) return; el.scrollTop += v; v *= 0.95; fling = requestAnimationFrame(glide); };
+    glide();
+  };
+  mapEl.addEventListener('touchstart', swipeStart, { passive: true });
+  mapEl.addEventListener('touchmove', swipeMove, { passive: true });
+  mapEl.addEventListener('touchend', swipeEnd, { passive: true });
+  mapEl.addEventListener('touchcancel', swipeEnd, { passive: true });
+  sheetOff = () => {
+    el.removeEventListener('scroll', onSheetScroll); cancelAnimationFrame(spRaf); document.body.style.removeProperty('--sp');
+    cancelAnimationFrame(fling);
+    for (const [t, f] of [['touchstart', swipeStart], ['touchmove', swipeMove], ['touchend', swipeEnd], ['touchcancel', swipeEnd]]) mapEl.removeEventListener(t, f);
+    setSwipeScroll(false);
+  };
   const clearMap = () => {
     const on = !!spot && document.activeElement !== $('#city', el);
     if (document.body.classList.contains('map-clear') === on) return;

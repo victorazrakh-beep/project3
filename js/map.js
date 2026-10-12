@@ -472,6 +472,12 @@ export async function setInteractive(on) {
   if (on) map.touchZoomRotate.disableRotation();
 }
 
+/** On phones, lets a one-finger swipe over the map scroll the page instead of dragging the map. Taps and pinch-zoom still reach the map. */
+export async function setSwipeScroll(on) {
+  await ready;
+  on ? map.dragPan.disable() : map.dragPan.enable();
+}
+
 const clearStoryMarkers = () => { storyMarkers.forEach(m => m.remove()); storyMarkers = []; };
 const marker = (lon, lat, html, cls) => {
   const el = document.createElement('div');

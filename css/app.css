@@ -814,3 +814,9 @@ body[data-route="ahora"] { --map-h: 40vh; }
 .ic-more { background: #2c3a52; }
 .share-lbl { font-size: 12.5px; font-weight: 600; text-align: center; line-height: 1.2; }
 .share-note { text-align: center; margin: 14px 8px 4px; }
+
+/* Tú on phones: the cards sit in their own scroll box, so the map must not claim one-finger swipes
+   (JS hands them to the box). touch-action none keeps the browser from also trying to pan the page. */
+@media (max-width: 899px) {
+  body.map-clear #map, body.map-clear #map .maplibregl-canvas-container, body.map-clear #map .maplibregl-canvas { touch-action: none !important; }
+}
