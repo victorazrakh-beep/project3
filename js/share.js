@@ -23,6 +23,8 @@ export function openShare({ ev, total, spot, choice, distance }) {
   const url = resultLink(ev, spot, choice);
   let file = null;
 
+  // On phones the browser can't write to the gallery by itself: the share menu is the way in ("Guardar imagen" on iPhone, Fotos/Galería on Android).
+  const phone = !!navigator.canShare && matchMedia('(pointer: coarse)').matches;
   const box = document.createElement('div');
   box.className = 'sheet-backdrop share';
   box.innerHTML = `
@@ -34,7 +36,7 @@ export function openShare({ ev, total, spot, choice, distance }) {
           ${btn('wa', 'WhatsApp', ICONS.wa)}
           ${btn('ig', 'Historia de Instagram', ICONS.ig)}
           ${btn('copy', 'Copiar enlace', ICONS.link)}
-          ${btn('save', 'Guardar imagen', ICONS.save)}
+          ${btn('save', phone ? 'Guardar en galería' : 'Guardar imagen', ICONS.save)}
           ${navigator.share ? btn('more', 'Más opciones', ICONS.more) : ''}
         </div>
         <p class="muted small share-note">El enlace abre este mismo resultado: tu punto aproximado (unos 100 m), el piso y el suelo que elegiste.</p>
@@ -71,16 +73,21 @@ export function openShare({ ev, total, spot, choice, distance }) {
     } else if (act === 'ig' || act === 'save') {
       const f = file || await ready;
       if (!f) return flash(b, 'No se pudo crear');
-      // On phones the share menu lists Instagram → Historia; elsewhere the image is saved.
-      if (act === 'ig' && navigator.canShare?.({ files: [f] })) {
-        navigator.share({ files: [f] }).catch(() => {});
+      // On phones the share menu lists Instagram → Historia and Guardar imagen; elsewhere the file downloads.
+      if (navigator.canShare?.({ files: [f] }) && (act === 'ig' || phone)) {
+        // "Guardar en galería": the share menu offers Guardar imagen / Fotos. If sharing fails (not cancelled), fall back to a download.
+        navigator.share({ files: [f] }).catch(err => { if (err?.name !== 'AbortError') download(f, b, act); });
       } else {
-        const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(f), download: f.name });
-        document.body.append(a); a.click(); a.remove();
-        flash(b, act === 'ig' ? 'Imagen guardada: súbela a tu historia' : 'Imagen guardada');
+        download(f, b, act);
       }
     }
   });
+}
+
+function download(f, b, act) {
+  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(f), download: f.name });
+  document.body.append(a); a.click(); a.remove();
+  flash(b, act === 'ig' ? 'Imagen guardada: súbela a tu historia' : 'Imagen guardada');
 }
 
 const btn = (act, label, icon) => `<button class="share-btn" data-act="${act}"><span class="share-ic ic-${act}">${icon}</span><span class="share-lbl">${esc(label)}</span></button>`;
