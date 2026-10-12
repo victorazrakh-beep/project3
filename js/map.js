@@ -13,11 +13,14 @@ const loadLib = () => window.maplibregl ? Promise.resolve() : new Promise((resol
 const empty = () => ({ type: 'FeatureCollection', features: [] });
 const pt = (lon, lat, props = {}) => ({ type: 'Feature', properties: props, geometry: { type: 'Point', coordinates: [lon, lat] } });
 
-let map, ready, ev, epicenter, youMarker, popup;
+let map, ev, epicenter, youMarker, popup;
+// Screens can ask for the map before it's built (e.g. opening straight on #/tu), so they wait on this.
+let mapIsReady;
+const ready = new Promise(r => { mapIsReady = r; });
 let playing = null, waveAnim = null, flashAnim = null;
 
 export function initMap(el) {
-  ready = loadLib().then(() => new Promise(resolve => create(el, resolve)));
+  loadLib().then(() => create(el, mapIsReady));
   return ready;
 }
 

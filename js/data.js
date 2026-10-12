@@ -112,30 +112,29 @@ const PHOTON = 'https://photon.komoot.io';
 let searchCtl;
 function photonPlace(f) {
   const p = f.properties, [lon, lat] = f.geometry.coordinates;
-  const detail = [p.district, p.city !== p.name ? p.city : null, p.county, p.state, p.country].filter(Boolean)
+  const detail = [p.district, p.city !== p.name ? p.city : null, p.county, p.state].filter(Boolean)
     .filter((v, i, a) => a.indexOf(v) === i).slice(0, 3).join(', ');
   const name = p.name || [p.street, p.housenumber].filter(Boolean).join(' ') || p.district || p.city || 'Lugar sin nombre';
   return { name, detail, lat, lon };
 }
-/**
- * Searches places in the area the quake shook (the ShakeMap extent), falling back to a
- * search biased toward the epicenter. Cancels the previous search when a new one starts.
- */
+// Panamá's outline, roughly: its bounding box with the Costa Rica and Colombia borders as straight lines.
+const PANAMA_BBOX = '-83.06,7.15,-77.15,9.70';
+export const inPanama = (lat, lon) => lat > 7.15 && lat < 9.7
+  && lon > -82.93 + 0.24 * (lat - 8.03) && lon < -77.89 + 0.36 * (lat - 7.22);
+
+/** Searches places in Panamá only, ranked toward the epicenter. Cancels the previous search when a new one starts. */
 export async function searchPlaces(query, ev) {
   searchCtl?.abort();
   searchCtl = new AbortController();
-  const { signal } = searchCtl;
-  const run = async extra => {
-    const q = new URLSearchParams({ q: query, limit: 8, ...extra });
-    const res = await fetch(`${PHOTON}/api/?${q}`, { signal });
-    if (!res.ok) throw new Error('search failed');
-    return (await res.json()).features.map(photonPlace);
-  };
-  const g = ev.grid;
-  let found = g ? await run({ bbox: [g.x0, g.y0, g.x1, g.y1].map(v => v.toFixed(3)).join(',') }) : [];
-  if (found.length < 3) found = found.concat(await run({ lat: ev.lat, lon: ev.lon, zoom: 7, location_bias_scale: 0.9 }));
+  const q = new URLSearchParams({ q: query, limit: 15, bbox: PANAMA_BBOX, lat: ev.lat, lon: ev.lon, zoom: 7, location_bias_scale: 0.1 });
+  const res = await fetch(`${PHOTON}/api/?${q}`, { signal: searchCtl.signal });
+  if (!res.ok) throw new Error('search failed');
   const seen = new Set();
-  return found.filter(p => { const k = `${p.name}|${p.detail}`; return !seen.has(k) && seen.add(k); });
+  return (await res.json()).features
+    .filter(f => f.properties.countrycode === 'PA')
+    .map(photonPlace)
+    .filter(p => { const k = `${p.name}|${p.detail}`; return !seen.has(k) && seen.add(k); })
+    .slice(0, 8);
 }
 
 /** Rough rupture length (Wells & Coppersmith 1994) → how far out to look for aftershocks. */

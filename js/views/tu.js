@@ -1,6 +1,6 @@
 // "Tú": your personal intensity, from the USGS shaking grid at your exact spot.
 import { $, $$, esc, num, int, roman, mmiInfo, mmiColor, MMI, ease, reduceMotion, haptic, store, shortPlace } from '../util.js';
-import { shakingAt, searchPlaces, loadDYFI } from '../data.js';
+import { shakingAt, searchPlaces, loadDYFI, inPanama } from '../data.js';
 import { km } from '../util.js';
 import { showYou, onMapClick, clearYou } from '../map.js';
 
@@ -26,7 +26,7 @@ export function render({ ev }) {
     </button>
     <div class="search-wrap" role="combobox" aria-expanded="false" aria-haspopup="listbox">
       <svg class="search-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-      <input id="city" class="input search" type="search" placeholder="Busca tu barrio, calle o pueblo" autocomplete="off" enterkeyhint="search"
+      <input id="city" class="input search" type="search" placeholder="Busca tu barrio, calle o pueblo en Panamá" autocomplete="off" enterkeyhint="search"
         aria-label="Buscar un lugar" aria-autocomplete="list" aria-controls="suggest">
       <span class="search-spin" id="search-spin" hidden></span>
       <div class="suggest" id="suggest" role="listbox" hidden></div>
@@ -41,7 +41,7 @@ export function render({ ev }) {
     <div class="floor" id="floor" ${choice.place === 'edificio' ? '' : 'hidden'}>
       <span>Piso</span>
       <button class="round" data-floor="-1" aria-label="Piso más bajo">−</button>
-      <b id="floor-n">${choice.floor}</b>
+      <input class="floor-n" id="floor-n" type="number" inputmode="numeric" min="1" max="80" value="${choice.floor}" aria-label="Número de piso">
       <button class="round" data-floor="1" aria-label="Piso más alto">+</button>
     </div>
     <h2 class="mt"><span class="step">3</span> ¿Sobre qué suelo? <small class="muted">opcional</small></h2>
@@ -212,7 +212,7 @@ export function mount(el, ctx) {
         <span class="grow"><b>${esc(r.name)}</b><small>${esc(r.detail || '')}</small></span>
         ${r.local ? '<em class="tag">USGS</em>' : ''}
       </button>`).join('')
-      : `<p class="muted small pad">${spin.hidden ? 'No encontramos ese lugar. Prueba con el nombre del pueblo o toca el mapa.' : 'Buscando…'}</p>`;
+      : `<p class="muted small pad">${spin.hidden ? 'No encontramos ese lugar en Panamá. Prueba con el nombre del pueblo o toca el mapa.' : 'Buscando…'}</p>`;
     input.setAttribute('aria-activedescendant', active >= 0 ? `opt-${active}` : '');
   }
   function choose(r) {
@@ -226,7 +226,7 @@ export function mount(el, ctx) {
     const q = input.value.trim(), fq = fold(q), mine = ++seq;
     clearTimeout(timer);
     // Towns the USGS already rated show up instantly; OpenStreetMap fills in streets and barrios.
-    const local = q.length < 2 ? [] : (ev.cities || []).filter(c => fold(c.name).startsWith(fq) || fold(c.name).includes(` ${fq}`))
+    const local = q.length < 2 ? [] : (ev.cities || []).filter(c => inPanama(c.lat, c.lon)).filter(c => fold(c.name).startsWith(fq) || fold(c.name).includes(` ${fq}`))
       .slice(0, 3).map(c => ({ name: c.name, detail: shortPlace(ev.place), lat: c.lat, lon: c.lon, local: true }));
     results = local; active = local.length ? 0 : -1;
     if (q.length < 3) { spin.hidden = true; show(); return; }
@@ -283,9 +283,17 @@ export function mount(el, ctx) {
     const b = e.target.closest('[data-floor]');
     if (!b) return;
     choice.floor = Math.max(1, Math.min(80, choice.floor + +b.dataset.floor));
-    $('#floor-n', el).textContent = choice.floor;
+    $('#floor-n', el).value = choice.floor;
     compute(false);
   });
+  const floorInput = $('#floor-n', el);
+  floorInput.addEventListener('focus', () => floorInput.select());
+  floorInput.addEventListener('input', () => {
+    const n = parseInt(floorInput.value, 10);
+    if (n >= 1) { choice.floor = Math.min(80, n); compute(false); }
+  });
+  floorInput.addEventListener('change', () => { floorInput.value = choice.floor; });
+  floorInput.addEventListener('keydown', e => { if (e.key === 'Enter') floorInput.blur(); });
 
   offClick = onMapClick(e => {
     if (e.defaultPrevented) return;
