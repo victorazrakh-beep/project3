@@ -23,6 +23,11 @@ jobs:
       - uses: actions/checkout@v4
       - name: Refresh local network data
         run: python3 tools/fetch_up.py data/up.json || echo "Keeping the committed copy"
+      - name: Stamp file versions so browsers fetch fresh code after each deploy
+        run: |
+          v=${GITHUB_SHA::7}
+          perl -pi -e "s#(from '\.\.?/[\w/.-]+\.js)'#\$1?v=$v'#g" $(find js -name '*.js')
+          perl -pi -e "s#\"((?:css|js)/[\w/.-]+\.(?:js|css))\"#\"\$1?v=$v\"#g" index.html
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
