@@ -37,9 +37,13 @@ async function start() {
   addEventListener('hashchange', route);
   route();
   document.body.classList.add('ready');
-  // Building the 3D map is the heaviest step, so it starts only once the screen is showing.
+  // Building the 3D map is the heaviest step: it waits until the intro's words have landed (so the
+  // animation stays smooth), and the camera flies in as the intro splits open.
+  await (window.introSettled || Promise.resolve());
   await new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)));
   await initMap($('#map'));
+  window.introMapReady = true;
+  await (window.introDone || Promise.resolve());
   showEvent(ctx.ev, { intro: true });
   setAftershocks(ctx.shocks);
   setLocal(ctx.local?.events);
@@ -54,6 +58,7 @@ function route() {
   const next = ROUTES[name];
   const swap = () => {
     ctx.current?.unmount?.();
+    ctx.prepScrub = null;
     stopSequence();
     clearYou();
     view.innerHTML = next.render(ctx) + footer();
@@ -85,7 +90,7 @@ async function poll() {
   if (document.hidden) return;
   if (ctx.ev.inPanama && ++polls % 5 === 0) { // the local list is rebuilt every ~10 minutes
     const local = await localFor(ctx.ev, refreshLocal);
-    if (local) { ctx.local = local; setLocal(local.events); ctx.current?.onLocal?.(local); }
+    if (local) { ctx.local = local; setLocal(local.events); ctx.current?.onLocal?.(local); ctx.prepScrub?.(); }
   }
   const latest = await loadAftershocks(ctx.ev).catch(() => null);
   if (!latest) return;
@@ -94,6 +99,7 @@ async function poll() {
   ctx.shocks = latest;
   setAftershocks(latest, { fresh });
   ctx.current?.onShocks?.(latest, fresh);
+  ctx.prepScrub?.();
   if (fresh.length) {
     const big = fresh.reduce((a, b) => (b.mag > a.mag ? b : a));
     toast(`<span class="mag-dot" style="--c:${magColor(big.mag)}">${num(big.mag, 1)}</span>

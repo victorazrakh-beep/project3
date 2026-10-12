@@ -1,7 +1,7 @@
 // "Ciencia": what moved, how deep, how much energy, and how aftershocks fade.
 import { $, esc, num, int, compact, reveal, magColor, mmiColor, km, reduceMotion } from '../util.js';
 import { loadHistory } from '../data.js';
-import { BALBOA, loadSeismogram } from '../seismo.js';
+import { BCIP, loadSeismogram } from '../seismo.js';
 
 const HIROSHIMA_J = 6.3e13;
 const energy = m => 10 ** (1.5 * m + 4.8); // joules (Gutenberg–Richter)
@@ -68,7 +68,7 @@ export function render({ ev, shocks }) {
   ${ev.inPanama ? `
   <section class="card reveal">
     <h2>Así lo grabó un sismógrafo</h2>
-    <p class="muted small">Registro real de la estación de ${esc(BALBOA.name)}, a ${int(km(ev.lat, ev.lon, BALBOA.lat, BALBOA.lon))} km del epicentro. Componente vertical, 10 minutos desde el inicio del sismo.</p>
+    <p class="muted small">Registro real de la estación de ${esc(BCIP.name)}, a ${int(km(ev.lat, ev.lon, BCIP.lat, BCIP.lon))} km del epicentro. Componente vertical, 10 minutos desde el inicio del sismo.</p>
     <div class="seismo" id="seismo"><canvas></canvas><p class="muted small seismo-msg">Descargando la señal…</p></div>
     <div class="seismo-legend"><span class="p">Onda P</span><span class="s">Onda S</span><span class="muted">tiempo desde el inicio →</span></div>
     <p class="muted small">Datos: estación CU.BCIP, red del Caribe (USGS), vía <a href="https://ds.iris.edu/mda/CU/BCIP/" target="_blank" rel="noopener">EarthScope</a>.</p>
@@ -111,7 +111,7 @@ export function render({ ev, shocks }) {
     <h2>Fuentes</h2>
     <ul class="ticks sources">
       ${ev.inPanama ? `<li><a href="https://sismosgeociencias.up.ac.pa/" target="_blank" rel="noopener">Instituto de Geociencias, Universidad de Panamá</a>: sismos de la red local</li>
-      <li><a href="https://ds.iris.edu/mda/CU/BCIP/" target="_blank" rel="noopener">EarthScope</a>: sismograma de la estación de Balboa</li>
+      <li><a href="https://ds.iris.edu/mda/CU/BCIP/" target="_blank" rel="noopener">EarthScope</a>: sismograma de la estación de Isla Barro Colorado</li>
       <li><a href="https://www.sinaproc.gob.pa/" target="_blank" rel="noopener">SINAPROC</a>: la autoridad oficial de protección civil</li>` : ''}
       <li><a href="${esc(ev.url)}/ground-failure/summary" target="_blank" rel="noopener">USGS: deslizamientos y licuefacción</a></li>
       <li><a href="https://www.ngdc.noaa.gov/hazel/view/hazards/earthquake/search" target="_blank" rel="noopener">NOAA NCEI: base de datos de sismos históricos</a></li>
@@ -174,7 +174,7 @@ async function history(card, ev) {
 async function drawSeismogram(box, ev) {
   const canvas = box.querySelector('canvas'), msg = box.querySelector('.seismo-msg');
   let trace;
-  try { trace = await loadSeismogram(BALBOA, ev.time, 600); } catch { trace = null; }
+  try { trace = await loadSeismogram(BCIP, ev.time, 600); } catch { trace = null; }
   if (!box.isConnected) return;
   if (!trace?.samples.length) { msg.textContent = 'La estación todavía no publica este registro.'; return; }
   msg.remove();
@@ -195,7 +195,7 @@ async function drawSeismogram(box, ev) {
     lo[c] = a; hi[c] = b; peak = Math.max(peak, Math.abs(a), Math.abs(b));
   }
   const seconds = s.length / trace.rate, x = t => (t - (trace.start - ev.time) / 1000) / seconds * w;
-  const dist = Math.hypot(km(ev.lat, ev.lon, BALBOA.lat, BALBOA.lon), ev.depth || 10);
+  const dist = Math.hypot(km(ev.lat, ev.lon, BCIP.lat, BCIP.lon), ev.depth || 10);
   const marks = [['p', dist / 6.5, '#7fd4ff'], ['s', dist / 3.6, '#ffb547']];
   const grad = g.createLinearGradient(0, 0, w, 0);
   grad.addColorStop(0, '#7fd4ff'); grad.addColorStop(0.35, '#ffb547'); grad.addColorStop(1, '#ff6a4a');

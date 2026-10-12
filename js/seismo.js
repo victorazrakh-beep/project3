@@ -2,10 +2,17 @@
 
 const DATASELECT = 'https://service.earthscope.org/fdsnws/dataselect/1/query';
 
-/** Station BCIP (Balboa, Panamá) of the Caribbean network, operated with the USGS. */
-export const BALBOA = { net: 'CU', sta: 'BCIP', loc: '00', cha: 'BHZ', lat: 9.1665, lon: -79.8373, name: 'Balboa, Panamá' };
+/** Station BCIP (Isla Barro Colorado, in the Panama Canal) of the Caribbean network, operated with the USGS. */
+export const BCIP = { net: 'CU', sta: 'BCIP', loc: '00', cha: 'BHZ', lat: 9.1665, lon: -79.8373, name: 'Isla Barro Colorado, Panamá' };
 
-export async function loadSeismogram(station, startMs, seconds) {
+const cache = new Map();
+/** Fetched once per station and window (the home screen and Ciencia share it). */
+export function loadSeismogram(station, startMs, seconds) {
+  const key = `${station.sta}-${startMs}-${seconds}`;
+  if (!cache.has(key)) cache.set(key, fetchSeismogram(station, startMs, seconds).catch(e => { cache.delete(key); throw e; }));
+  return cache.get(key);
+}
+async function fetchSeismogram(station, startMs, seconds) {
   const iso = t => new Date(t).toISOString().slice(0, 19);
   const q = new URLSearchParams({ net: station.net, sta: station.sta, loc: station.loc, cha: station.cha,
     starttime: iso(startMs), endtime: iso(startMs + seconds * 1000) });

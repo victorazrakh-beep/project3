@@ -51,6 +51,8 @@ export async function loadEvent(id) {
     dyfiUrl: file('dyfi', 'dyfi_geo_10km.geojson') || null,
     historyUrl: file('losspager', 'json/historical_earthquakes.json') || null,
     groundFailure: groundFailure(products['ground-failure']?.[0]?.properties),
+    faultUrl: file('finite-fault', 'FFM.geojson') || null,
+    faultInfo: products['finite-fault']?.[0]?.properties || null,
     mechanism: mt['nodal-plane-1-rake'] != null ? {
       strike: +mt['nodal-plane-1-strike'], dip: +mt['nodal-plane-1-dip'], rake: +mt['nodal-plane-1-rake'],
       moment: +mt['scalar-moment'] || null,
@@ -88,6 +90,41 @@ export const loadDYFI = ev => once(`dyfi-${ev.id}`, async () => {
     const lon = ring.reduce((a, p) => a + p[0], 0) / ring.length, lat = ring.reduce((a, p) => a + p[1], 0) / ring.length;
     return { lat, lon, cdi: f.properties.cdi, responses: f.properties.nresp, ring };
   });
+});
+
+/**
+ * The USGS finite-fault model: ~200 patches of the fault, each with its slip (m) and the
+ * moment the rupture reached it (s). Also works out the headline numbers from the patches.
+ */
+export const loadFault = ev => once(`ffm-${ev.id}`, async () => {
+  if (!ev.faultUrl) return null;
+  const data = await json(ev.faultUrl);
+  const patches = data.features.filter(f => f.geometry?.type === 'Polygon').map(f => {
+    const ring = f.geometry.coordinates[0].slice(0, -1);
+    const lon = ring.reduce((a, p) => a + p[0], 0) / ring.length, lat = ring.reduce((a, p) => a + p[1], 0) / ring.length;
+    return { lon, lat, slip: f.properties.slip, trup: f.properties.trup, moment: f.properties.sf_moment, ring: f.geometry.coordinates[0] };
+  });
+  const maxSlip = Math.max(...patches.map(p => p.slip));
+  // Duration: when 95% of the energy (seismic moment) had been released.
+  const byTime = [...patches].sort((a, b) => a.trup - b.trup), total = patches.reduce((a, p) => a + p.moment, 0);
+  let acc = 0, duration = byTime[byTime.length - 1].trup;
+  for (const p of byTime) { acc += p.moment; if (acc >= total * 0.95) { duration = p.trup; break; } }
+  // Length: the farthest apart two patches that slipped at least a fifth of the maximum.
+  const big = patches.filter(p => p.slip >= maxSlip * 0.2);
+  let length = 0;
+  for (const a of big) for (const b of big) length = Math.max(length, km(a.lat, a.lon, b.lat, b.lon));
+  // Moment rate over time, for the little chart.
+  const bins = new Array(40).fill(0), end = byTime[byTime.length - 1].trup;
+  for (const p of patches) bins[Math.min(39, Math.floor(p.trup / end * 40))] += p.moment;
+  const w = patches.reduce((a, p) => a + p.slip, 0);
+  return {
+    geojson: { type: 'FeatureCollection', features: patches.map(p => ({ type: 'Feature', properties: { slip: p.slip, trup: p.trup },
+      geometry: { type: 'Polygon', coordinates: [p.ring.map(([x, y]) => [x, y])] } })) },
+    center: [patches.reduce((a, p) => a + p.lon * p.slip, 0) / w, patches.reduce((a, p) => a + p.lat * p.slip, 0) / w],
+    maxSlip, duration, end, length, rate: bins.map(b => b / Math.max(...bins)),
+    speed: +ev.faultInfo?.['average-rupture-velocity'] || null,
+    depth: +ev.faultInfo?.depth || ev.depth,
+  };
 });
 
 /** Strong past quakes near this one (USGS PAGER). */

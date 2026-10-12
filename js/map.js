@@ -4,6 +4,7 @@ import { aftershockRadius } from './data.js';
 
 const STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
 const LIB = 'https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js';
+const DEM = 'https://elevation-tiles-prod.s3.amazonaws.com/terrarium/{z}/{x}/{y}.png';
 
 // The map library is big; load it without holding up the rest of the page.
 const loadLib = () => window.maplibregl ? Promise.resolve() : new Promise((resolve, reject) => {
@@ -41,10 +42,20 @@ function setup() {
   const before = map.getStyle().layers.find(l => l.type === 'symbol')?.id;
   labels = before;
   const add = (layer, under = before) => map.addLayer(layer, under);
-  for (const id of ['contours', 'local', 'aftershocks', 'flash', 'waves', 'cities', 'link']) map.addSource(id, { type: 'geojson', data: empty() });
+  for (const id of ['contours', 'local', 'aftershocks', 'flash', 'waves', 'cities', 'link', 'ffm', 'path']) map.addSource(id, { type: 'geojson', data: empty() });
+
+  // Relief of land and seafloor (the Middle America trench shows up south of Panamá).
+  map.addSource('dem', { type: 'raster-dem', tiles: [DEM], tileSize: 256, maxzoom: 11, encoding: 'terrarium',
+    attribution: '<a href="https://registry.opendata.aws/terrain-tiles/" target="_blank" rel="noopener">Terrain Tiles</a>' });
+  const firstLine = map.getStyle().layers.find(l => l.type === 'line')?.id;
+  map.addLayer({ id: 'relief', type: 'hillshade', source: 'dem', paint: {
+    'hillshade-exaggeration': 0.55, 'hillshade-shadow-color': 'rgba(0,0,0,0.55)',
+    'hillshade-highlight-color': 'rgba(127,212,255,0.16)', 'hillshade-accent-color': 'rgba(20,40,70,0.4)' } }, firstLine);
 
   add({ id: 'waves-fill', type: 'fill', source: 'waves', paint: { 'fill-color': ['get', 'color'], 'fill-opacity': ['get', 'fill'] } });
   add({ id: 'waves-line', type: 'line', source: 'waves', paint: { 'line-color': ['get', 'color'], 'line-width': ['get', 'width'], 'line-opacity': ['get', 'opacity'], 'line-blur': 0.6 } });
+  add({ id: 'path', type: 'line', source: 'path', layout: { visibility: 'none' },
+    paint: { 'line-color': '#7fd4ff', 'line-width': 1.6, 'line-opacity': 0.8, 'line-dasharray': [2, 2] } });
   add({ id: 'contours', type: 'line', source: 'contours', layout: { 'line-join': 'round' },
     paint: { 'line-color': ['get', 'color'], 'line-width': 1.1, 'line-opacity': 0.55, 'line-dasharray': [2, 2] } });
   add({ id: 'link', type: 'line', source: 'link', paint: { 'line-color': '#ffffff', 'line-width': 1.4, 'line-opacity': 0.7, 'line-dasharray': [1, 2] } });
@@ -63,6 +74,10 @@ function setup() {
   add({ id: 'cities', type: 'circle', source: 'cities', layout: { visibility: 'none' }, paint: {
     'circle-radius': ['interpolate', ['linear'], ['get', 'logpop'], 3, 3.5, 6, 9],
     'circle-color': ['get', 'color'], 'circle-opacity': 0.9, 'circle-stroke-color': '#07090f', 'circle-stroke-width': 1.2 } }, undefined);
+
+  // The fault: each patch of the USGS finite-fault model rises with how far it slipped.
+  add({ id: 'ffm', type: 'fill-extrusion', source: 'ffm', layout: { visibility: 'none' }, paint: {
+    'fill-extrusion-color': SLIP_COLOR, 'fill-extrusion-height': 0, 'fill-extrusion-opacity': 0.92 } }, undefined);
 
   map.on('click', 'aftershocks', e => {
     const p = e.features[0].properties;
@@ -89,9 +104,12 @@ export const onMapClick = handler => {
 };
 
 /** Loads a quake onto the map and flies in from space. */
+let evSet;
+const evReady = new Promise(r => { evSet = r; });
 export async function showEvent(event, { intro = false } = {}) {
   await ready;
   ev = event;
+  evSet();
   epicenter?.remove();
   const el = document.createElement('div');
   el.className = 'epi';
@@ -100,6 +118,8 @@ export async function showEvent(event, { intro = false } = {}) {
 
   map.getSource('contours').setData(ev.contours || empty());
   drawShake();
+  // If the reader already scrolled into a chapter of the story, don't yank the camera back.
+  if (story && story !== 'hero') return;
   frame('event', { animate: !intro });
   if (intro && !reduceMotion()) {
     await new Promise(r => setTimeout(r, 350));
@@ -214,10 +234,12 @@ export function stopSequence() {
 }
 
 /** Quakes from the Universidad de Panamá network, from the main shock on. */
-export async function setLocal(list) {
+let localList = [];
+export async function setLocal(list, until = Infinity) {
   await ready;
+  localList = list || [];
   const now = Date.now();
-  map.getSource('local').setData({ type: 'FeatureCollection', features: (list || []).map(s => pt(s.lon, s.lat, {
+  map.getSource('local').setData({ type: 'FeatureCollection', features: localList.filter(s => s.time <= until).map(s => pt(s.lon, s.lat, {
     mag: s.mag, place: s.place, time: s.time, color: magColor(s.mag), o: Math.max(0.35, 0.9 - (now - s.time) / (7 * 864e5) * 0.5) })) });
 }
 
@@ -404,3 +426,142 @@ export async function showCities(cities) {
 export function focusPoint(lon, lat, zoom = 9) {
   map?.flyTo({ center: [lon, lat], zoom, duration: reduceMotion() ? 0 : 1400, essential: true });
 }
+
+// ---- Story scenes for the home screen ----
+// Slip color ramp (m), from deep purple to white-hot.
+const SLIP_COLOR = ['interpolate', ['linear'], ['get', 'slip'], 0, '#2a1446', 1, '#5b1f7a', 2.5, '#b3306b', 4.5, '#ec5a3c', 6.5, '#ffb547', 7.8, '#fff3c4'];
+let story = null, ruptureAnim = 0, storyMarkers = [];
+
+/** Hands the fault model to the map (features with slip in m and rupture time in s). */
+export async function setFault(geojson) {
+  await ready;
+  map.getSource('ffm').setData(geojson || empty());
+}
+
+/** Plays the rupture: patches rise as the break reaches them. onTick(seconds) for the UI. */
+export function playRupture(total, onTick, ms = 6500) {
+  cancelAnimationFrame(ruptureAnim);
+  const start = performance.now();
+  const step = now => {
+    const k = Math.min(1, (now - start) / (reduceMotion() ? 1 : ms));
+    const T = k * total;
+    // Height ramps up over ~4 s of fault time after each patch starts slipping; the active front glows.
+    map.setPaintProperty('ffm', 'fill-extrusion-height',
+      ['*', ['get', 'slip'], 5200, ['min', 1, ['max', 0, ['/', ['-', T, ['get', 'trup']], 4]]]]);
+    map.setPaintProperty('ffm', 'fill-extrusion-color',
+      ['case', ['all', ['<=', ['get', 'trup'], T], ['>', ['get', 'trup'], T - 2.5]], '#ffffff', SLIP_COLOR]);
+    onTick?.(T, k);
+    if (k < 1) ruptureAnim = requestAnimationFrame(step);
+    else map.setPaintProperty('ffm', 'fill-extrusion-color', SLIP_COLOR);
+  };
+  ruptureAnim = requestAnimationFrame(step);
+}
+
+/** Shows aftershocks (USGS and the local network) only up to a moment in time. */
+export function shockTime(until) {
+  if (!map?.getSource('aftershocks')) return;
+  renderShocks(until);
+  setLocal(localList, until);
+}
+
+/** Lets the home screen use the map as a backdrop on phones (swipes scroll the page instead). */
+export async function setInteractive(on) {
+  await ready;
+  for (const h of ['dragPan', 'scrollZoom', 'touchZoomRotate', 'doubleClickZoom', 'keyboard']) on ? map[h].enable() : map[h].disable();
+  if (on) map.touchZoomRotate.disableRotation();
+}
+
+const clearStoryMarkers = () => { storyMarkers.forEach(m => m.remove()); storyMarkers = []; };
+const marker = (lon, lat, html, cls) => {
+  const el = document.createElement('div');
+  el.className = cls; el.innerHTML = html;
+  const m = new maplibregl.Marker({ element: el }).setLngLat([lon, lat]).addTo(map);
+  storyMarkers.push(m);
+  return m;
+};
+
+/**
+ * Moves the camera and layers for each chapter of the home screen:
+ * hero, fault, shocks, shaking, listen, forecast, calm.
+ */
+export async function scene(name, data = {}) {
+  await ready;
+  await evReady;
+  if (story === name) return;
+  story = name;
+  const wide = innerWidth >= 900, still = reduceMotion();
+  const padding = wide ? { top: 90, bottom: 60, left: 520, right: 60 } : { top: 80, bottom: innerHeight * 0.42, left: 24, right: 24 };
+  // Each scene starts from a clean camera padding (flyTo keeps the padding it was given).
+  const pd = map.getPadding();
+  if (pd.top || pd.bottom || pd.left || pd.right) map.setPadding({ top: 0, bottom: 0, left: 0, right: 0 });
+  const fly = opts => map.flyTo({ duration: still ? 0 : 2600, curve: 1.3, essential: true, padding, ...opts });
+  // Fit an area, then tilt: computed flat first because fitting with a tilt can fail on the globe.
+  const fit = (bounds, { pitch = 0, bearing = 0, maxZoom = 9, pad = padding } = {}) => {
+    const cam = map.cameraForBounds(bounds, { padding: pad, maxZoom });
+    if (cam) map.flyTo({ ...cam, pitch, bearing, duration: still ? 0 : 2600, curve: 1.3, essential: true });
+  };
+  clearStoryMarkers();
+  cancelAnimationFrame(ruptureAnim);
+  map.setLayoutProperty('ffm', 'visibility', name === 'fault' ? 'visible' : 'none');
+  map.setLayoutProperty('path', 'visibility', name === 'listen' ? 'visible' : 'none');
+  if (map.getLayer('shake')) map.setPaintProperty('shake', 'raster-opacity', name === 'shaking' ? 0.95 : name === 'fault' ? 0.25 : 0.6);
+  map.setPaintProperty('contours', 'line-opacity', name === 'shaking' ? 0.95 : 0.4);
+  map.setPaintProperty('contours', 'line-width', name === 'shaking' ? 1.8 : 1.1);
+  if (name !== 'shocks') shockTime(Infinity);
+  // The fault scene is about the fault: aftershocks fade back.
+  map.setPaintProperty('aftershocks', 'circle-opacity', name === 'fault' ? 0.12 : ['get', 'o']);
+  map.setPaintProperty('local', 'circle-stroke-opacity', name === 'fault' ? 0.1 : ['get', 'o']);
+  if (name !== 'listen') map.getSource('waves')?.setData(empty());
+
+  if (name === 'hero' || name === 'calm') {
+    frame('event');
+  } else if (name === 'fault') {
+    map.setMaxPitch(70);
+    fly({ center: data.center || [ev.lon, ev.lat], zoom: wide ? 8.1 : 7.75, pitch: 64, bearing: -20 });
+    map.once('moveend', () => story === 'fault' && data.onArrive?.());
+  } else if (name === 'shocks') {
+    map.setMaxPitch(70);
+    // On phones the counter card sits at the top, so the aftershocks go in the space below it.
+    fly({ center: [ev.lon, ev.lat], zoom: wide ? 7.2 : 6.9, pitch: 40, bearing: 12, padding: wide ? padding : { top: 330, bottom: 100, left: 16, right: 16 } });
+  } else if (name === 'shaking') {
+    const g = ev.grid;
+    if (g) fit([[g.x0 + (g.x1 - g.x0) * 0.18, g.y0 + (g.y1 - g.y0) * 0.18], [g.x1 - (g.x1 - g.x0) * 0.18, g.y1 - (g.y1 - g.y0) * 0.18]]);
+    else frame('event');
+  } else if (name === 'listen' && data.station) {
+    const st = data.station;
+    map.getSource('path').setData({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [[ev.lon, ev.lat], [st.lon, st.lat]] } });
+    marker(st.lon, st.lat, `<i></i><b><svg viewBox="0 0 24 24" width="16" height="16"><path d="M2 12h4l2-6 4 12 3-9 2 3h5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></b><span>${esc(st.short || st.name)}</span>`, 'station');
+    fit([[Math.min(ev.lon, st.lon), Math.min(ev.lat, st.lat)], [Math.max(ev.lon, st.lon), Math.max(ev.lat, st.lat)]],
+      { pitch: 45, bearing: -10, pad: wide ? padding : { ...padding, top: 120, left: 50, right: 50 } });
+  } else if (name === 'forecast') {
+    const list = data.history || [];
+    list.forEach((h, i) => marker(h.lon, h.lat, `<i style="animation-delay:${i * 0.35}s"></i><b style="--c:${magColor(h.mag)}">${num(h.mag, 1)}</b><span>${new Date(h.time).getUTCFullYear()}</span>`, 'past'));
+    const pts = list.map(h => [h.lon, h.lat]).concat([[ev.lon, ev.lat]]);
+    const lons = pts.map(p => p[0]), lats = pts.map(p => p[1]);
+    fit([[Math.min(...lons) - 0.6, Math.min(...lats) - 0.6], [Math.max(...lons) + 0.6, Math.max(...lats) + 0.6]], { pitch: 30, maxZoom: 7.5 });
+  }
+}
+/** Leaves the story: everything back to normal. */
+export function endStory() {
+  story = null;
+  cancelAnimationFrame(ruptureAnim);
+  if (!map?.getLayer('ffm')) return;
+  clearStoryMarkers();
+  map.setLayoutProperty('ffm', 'visibility', 'none');
+  map.setLayoutProperty('path', 'visibility', 'none');
+  map.setPaintProperty('aftershocks', 'circle-opacity', ['get', 'o']);
+  map.setPaintProperty('local', 'circle-stroke-opacity', ['get', 'o']);
+  shockTime(Infinity);
+}
+
+/** P and S wave fronts at a moment (seconds after the quake), for the seismogram playback. */
+export function wavesAt(secs) {
+  if (!map?.getSource('waves')) return;
+  map.getSource('waves').setData({ type: 'FeatureCollection', features: secs < 0 ? [] : [
+    ring(secs * 6.5, { color: '#7fd4ff', fill: 0.04, width: 1.6, opacity: 0.9 }),
+    ring(secs * 3.6, { color: '#ffb547', fill: 0.08, width: 2.4, opacity: 1 }),
+  ] });
+}
+
+/** Shakes the map, for the sound of the quake. */
+export function jolt(px) { shake(px, 160); }
